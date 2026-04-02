@@ -1,4 +1,3 @@
-// מניעת שגיאות של נתונים ישנים
 window.saveDataAcrossSessions = false;
 
 let gazeX = window.innerWidth / 2;
@@ -17,34 +16,28 @@ canvas.height = window.innerHeight;
 
 const calPoints = [
     {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
-    {x: window.innerWidth * 0.1, y: window.innerHeight * 0.1},
-    {x: window.innerWidth * 0.9, y: window.innerHeight * 0.1},
-    {x: window.innerWidth * 0.9, y: window.innerHeight * 0.9},
-    {x: window.innerWidth * 0.1, y: window.innerHeight * 0.9}
+    {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
+    {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
+    {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
+    {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// אתחול בטוח בתוך פונקציית טעינה
-window.addEventListener('load', async () => {
-    try {
-        await webgazer.setGazeListener((data) => {
-            if (data) {
-                gazeX = data.x;
-                gazeY = data.y;
-            }
-        }).begin();
+// אתחול
+window.addEventListener('load', () => {
+    webgazer.setGazeListener((data) => {
+        if (data) {
+            gazeX = data.x;
+            gazeY = data.y;
+        }
+    }).begin();
 
-        // הגדרות תצוגה ראשוניות
-        webgazer.showPredictionPoints(true);
-        webgazer.showVideoPreview(true); // השאירי true כדי לוודא שהמצלמה עובדת
+    webgazer.showPredictionPoints(true);
+    webgazer.showVideoPreview(true); // תשאירי true כדי לראות אם המצלמה עובדת ב-GitHub
 
-        // התחלת הלופ
-        requestAnimationFrame(loop);
-    } catch (e) {
-        console.error("WebGazer failed to start:", e);
-    }
+    requestAnimationFrame(loop);
 });
 
-// אימון המודל בלחיצה
+// אימון בלחיצה - קריטי ב-GitHub Pages!
 window.addEventListener('click', (e) => {
     webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
 });
@@ -76,12 +69,12 @@ function runCalibration() {
 
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 30, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(224, 58, 46, 0.3)";
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 30, -Math.PI/2, (-Math.PI/2) + progress * Math.PI * 2);
+    ctx.arc(p.x, p.y, 40, -Math.PI/2, (-Math.PI/2) + progress * Math.PI * 2);
     ctx.strokeStyle = "#E03A2E";
     ctx.stroke();
 
@@ -107,7 +100,11 @@ function runExperience() {
     let overlay = document.getElementById("overlay");
     let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
     
-    overlay.style.background = `radial-gradient(circle at ${smoothX}px ${smoothY}px, 
+    // וידוא שהערכים הם מספרים תקינים
+    let x = isNaN(smoothX) ? window.innerWidth/2 : smoothX;
+    let y = isNaN(smoothY) ? window.innerHeight/2 : smoothY;
+
+    overlay.style.background = `radial-gradient(circle at ${x}px ${y}px, 
         transparent 0px, 
         transparent ${radius}px, 
         rgba(0,0,0,0.95) ${radius + 100}px)`;
