@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Gaze System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="phase1">
+  <h1>OPTICAL SENSOR CALIBRATION</h1>
+  <p>הביטי בנקודה עד שהיא נטענת</p>
+  <canvas id="calCanvas"></canvas>
+</div>
+
+<div id="phase2" class="hidden">
+  <video id="bgVideo" autoplay muted loop playsinline>
+    <source src="Roman_Statue_Rotation_Video.mp4" type="video/mp4">
+  </video>
+
+  <div id="overlay"></div>
+</div>
+
+<script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>
