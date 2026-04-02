@@ -1,55 +1,38 @@
 body {
     margin: 0;
-    padding: 0;
     background: black;
     color: #E03A2E;
     font-family: 'Courier New', monospace;
     overflow: hidden;
-    cursor: crosshair; /* כוונת שעוזרת בכיול */
 }
 
 #phase1, #phase2 {
     position: absolute;
-    top: 0;
-    left: 0;
     width: 100vw;
     height: 100vh;
+    top: 0;
+    left: 0;
 }
 
-.hidden {
-    display: none !important;
-}
+.hidden { display: none !important; }
 
-h1 {
-    text-align: center;
-    margin-top: 40px;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-}
+h1 { text-align: center; margin-top: 40px; letter-spacing: 4px; }
+p { text-align: center; opacity: 0.6; }
 
-p {
-    text-align: center;
-    opacity: 0.6;
-}
-
-#calCanvas {
-    display: block;
-}
+#calCanvas { position: absolute; top: 0; left: 0; }
 
 #bgVideo {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(15px); /* טשטוש הרקע לחוויה אבסטרקטית */
+    filter: blur(15px);
     opacity: 0.3;
 }
 
 #overlay {
     position: absolute;
-    top: 0;
-    left: 0;
     width: 100%;
     height: 100%;
     pointer-events: none;
-    background: rgba(0, 0, 0, 0.9); /* שכבת חושך התחלתית */
+    background: rgba(0,0,0,0.9);
 }
