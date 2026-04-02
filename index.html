@@ -2,17 +2,15 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>Gaze System - Calibration</title>
+  <title>Gaze System</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
 <div id="phase1">
   <h1>כיול חיישן אופטי</h1>
-  <p>הביטי בנקודה עד שהיא נטענת. מומלץ ללחוץ עליה עם העכבר לדיוק מירבי.</p>
+  <p>הביטי בנקודה עד שהיא נטענת. (לחצי עליה עם העכבר לשיפור הדיוק)</p>
   <canvas id="calCanvas"></canvas>
 </div>
-
 <div id="phase2" class="hidden">
   <video id="bgVideo" autoplay muted loop playsinline>
     <source src="Roman_Statue_Rotation_Video.mp4" type="video/mp4">
@@ -20,7 +18,7 @@
   <div id="overlay"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/webgazer@2.1.0/dist/webgazer.js"></script>
+<script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
