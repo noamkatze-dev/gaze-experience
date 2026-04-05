@@ -1,5 +1,6 @@
 body {
     margin: 0;
+    padding: 0;
     background: black;
     color: #E03A2E;
     font-family: 'Courier New', monospace;
@@ -14,12 +15,26 @@ body {
     left: 0;
 }
 
-.hidden { display: none !important; }
+.hidden { 
+    display: none !important; 
+}
 
-h1 { text-align: center; margin-top: 40px; letter-spacing: 4px; }
-p { text-align: center; opacity: 0.6; }
+h1 { 
+    text-align: center; 
+    margin-top: 40px; 
+    letter-spacing: 4px; 
+}
 
-#calCanvas { position: absolute; top: 0; left: 0; }
+p { 
+    text-align: center; 
+    opacity: 0.6; 
+}
+
+#calCanvas { 
+    position: absolute; 
+    top: 0; 
+    left: 0; 
+}
 
 #bgVideo {
     width: 100%;
