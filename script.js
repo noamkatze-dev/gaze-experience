@@ -25,20 +25,25 @@ const calPoints = [
   {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// 🚀 אתחול
 window.onload = async () => {
-  if (!window.webgazer) return;
+  if (!window.webgazer) {
+    alert("WebGazer לא נטען");
+    return;
+  }
 
   try {
-    webgazer.setRegression('ridge'); // הכי יציב
-    webgazer.setTracker('clmtrackr'); // 🔥 מבטל MediaPipe לגמרי
+    // 🔥 הגדרות יציבות בלבד
+    webgazer.setRegression('ridge');
+    webgazer.setTracker('clmtrackr');
 
-    await webgazer.setGazeListener((data) => {
+    await webgazer.begin();
+
+    webgazer.setGazeListener((data) => {
       if (data) {
         gazeX = data.x;
         gazeY = data.y;
       }
-    }).begin();
+    });
 
     webgazer.showPredictionPoints(true);
     webgazer.showVideoPreview(true);
@@ -50,14 +55,14 @@ window.onload = async () => {
   }
 };
 
-// 🎯 קליקים לשיפור דיוק
+// קליקים לשיפור דיוק
 window.addEventListener('click', (e) => {
   if (window.webgazer) {
     webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
   }
 });
 
-// 🔁 לופ ראשי
+// לולאה
 function loop() {
   smoothX += (gazeX - smoothX) * 0.15;
   smoothY += (gazeY - smoothY) * 0.15;
@@ -71,18 +76,15 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
-// 🎯 כיול
+// כיול
 function runCalibration() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   let p = calPoints[current];
   let d = Math.hypot(smoothX - p.x, smoothY - p.y);
 
-  if (d < 120) {
-    dwell += 16.6;
-  } else {
-    dwell = 0;
-  }
+  if (d < 120) dwell += 16.6;
+  else dwell = 0;
 
   let progress = Math.min(dwell / DWELL_TIME, 1);
 
@@ -120,7 +122,7 @@ function startPhase2() {
   document.body.style.cursor = "none";
 }
 
-// 👁️ חוויית מבט
+// חוויית מבט
 function runExperience() {
   const overlay = document.getElementById("overlay");
 
