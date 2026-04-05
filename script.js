@@ -12,7 +12,7 @@ let dwell = 0;
 const DWELL_TIME = 1000;
 
 const canvas = document.getElementById("calCanvas");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -26,13 +26,9 @@ const calPoints = [
 ];
 
 window.onload = async () => {
-  if (!window.webgazer) {
-    alert("WebGazer לא נטען");
-    return;
-  }
+  if (!window.webgazer) return;
 
   try {
-    // 🔥 הגדרות יציבות בלבד
     webgazer.setRegression('ridge');
     webgazer.setTracker('clmtrackr');
 
@@ -51,32 +47,31 @@ window.onload = async () => {
     requestAnimationFrame(loop);
 
   } catch (err) {
-    console.error("WebGazer error:", err);
+    console.error(err);
   }
 };
 
-// קליקים לשיפור דיוק
+// קליק רק על נקודת כיול
 window.addEventListener('click', (e) => {
-  if (window.webgazer) {
-    webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
+  if (!calibrated) {
+    let p = calPoints[current];
+    let d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+
+    if (d < 80) {
+      webgazer.recordScreenPosition(p.x, p.y, 'click');
+    }
   }
 });
 
-// לולאה
 function loop() {
   smoothX += (gazeX - smoothX) * 0.15;
   smoothY += (gazeY - smoothY) * 0.15;
 
-  if (!calibrated) {
-    runCalibration();
-  } else {
-    runExperience();
-  }
+  if (!calibrated) runCalibration();
 
   requestAnimationFrame(loop);
 }
 
-// כיול
 function runCalibration() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -111,7 +106,6 @@ function runCalibration() {
   }
 }
 
-// מעבר שלב
 function startPhase2() {
   document.getElementById("phase1").classList.add("hidden");
   document.getElementById("phase2").classList.remove("hidden");
@@ -120,21 +114,4 @@ function startPhase2() {
   webgazer.showVideoPreview(false);
 
   document.body.style.cursor = "none";
-}
-
-// חוויית מבט
-function runExperience() {
-  const overlay = document.getElementById("overlay");
-
-  let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
-
-  let x = isNaN(smoothX) ? window.innerWidth / 2 : smoothX;
-  let y = isNaN(smoothY) ? window.innerHeight / 2 : smoothY;
-
-  overlay.style.background = `
-    radial-gradient(circle at ${x}px ${y}px,
-      transparent 0px,
-      transparent ${radius}px,
-      rgba(0,0,0,0.95) ${radius + 100}px)
-  `;
 }
