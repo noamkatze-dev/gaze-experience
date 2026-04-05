@@ -1,4 +1,3 @@
-// הגדרות בסיסיות
 window.saveDataAcrossSessions = false;
 
 let gazeX = window.innerWidth / 2;
@@ -15,7 +14,6 @@ const ctx = canvas.getContext("2d");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// נקודות כיול
 const calPoints = [
     {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
     {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
@@ -24,10 +22,10 @@ const calPoints = [
     {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// אתחול המערכת
+// אתחול המערכת - סדר פעולות מתוקן
 window.addEventListener('load', async () => {
-    // שלב קריטי: ביטול שימוש בקבצי MediaPipe חיצוניים שגורמים ל-404 ב-GitHub
     if (window.webgazer) {
+        // חייב לבוא לפני ה-begin() כדי למנוע את ה-404 ב-GitHub
         webgazer.params.useMediaPipe = false; 
 
         await webgazer.setGazeListener((data) => {
@@ -44,11 +42,8 @@ window.addEventListener('load', async () => {
     }
 });
 
-// שיפור דיוק על ידי לחיצות
 window.addEventListener('click', (e) => {
-    if (window.webgazer) {
-        webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
-    }
+    if (window.webgazer) webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
 });
 
 function loop() {
