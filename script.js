@@ -22,7 +22,7 @@ const calPoints = [
     {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// אתחול
+// אתחול WebGazer
 window.addEventListener('load', () => {
     webgazer.setGazeListener((data) => {
         if (data) {
@@ -32,17 +32,18 @@ window.addEventListener('load', () => {
     }).begin();
 
     webgazer.showPredictionPoints(true);
-    webgazer.showVideoPreview(true); // תשאירי true כדי לראות אם המצלמה עובדת ב-GitHub
+    webgazer.showVideoPreview(true); // מומלץ להשאיר דלוק עד שהכל עובד
 
     requestAnimationFrame(loop);
 });
 
-// אימון בלחיצה - קריטי ב-GitHub Pages!
+// לחיצת עכבר עוזרת לכיול ללמוד
 window.addEventListener('click', (e) => {
     webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
 });
 
 function loop() {
+    // החלקת תנועה
     smoothX += (gazeX - smoothX) * 0.15;
     smoothY += (gazeY - smoothY) * 0.15;
 
@@ -100,9 +101,9 @@ function runExperience() {
     let overlay = document.getElementById("overlay");
     let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
     
-    // וידוא שהערכים הם מספרים תקינים
-    let x = isNaN(smoothX) ? window.innerWidth/2 : smoothX;
-    let y = isNaN(smoothY) ? window.innerHeight/2 : smoothY;
+    // וידוא שהערכים תקינים לפני העדכון
+    let x = isNaN(smoothX) ? window.innerWidth / 2 : smoothX;
+    let y = isNaN(smoothY) ? window.innerHeight / 2 : smoothY;
 
     overlay.style.background = `radial-gradient(circle at ${x}px ${y}px, 
         transparent 0px, 
