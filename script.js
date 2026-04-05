@@ -1,3 +1,4 @@
+// הגדרות בסיסיות
 window.saveDataAcrossSessions = false;
 
 let gazeX = window.innerWidth / 2;
@@ -14,6 +15,7 @@ const ctx = canvas.getContext("2d");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
+// נקודות כיול
 const calPoints = [
     {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
     {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
@@ -22,28 +24,34 @@ const calPoints = [
     {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// אתחול WebGazer
-window.addEventListener('load', () => {
-    webgazer.setGazeListener((data) => {
-        if (data) {
-            gazeX = data.x;
-            gazeY = data.y;
-        }
-    }).begin();
+// אתחול המערכת
+window.addEventListener('load', async () => {
+    // שלב קריטי: ביטול שימוש בקבצי MediaPipe חיצוניים שגורמים ל-404 ב-GitHub
+    if (window.webgazer) {
+        webgazer.params.useMediaPipe = false; 
 
-    webgazer.showPredictionPoints(true);
-    webgazer.showVideoPreview(true); // מומלץ להשאיר דלוק עד שהכל עובד
+        await webgazer.setGazeListener((data) => {
+            if (data) {
+                gazeX = data.x;
+                gazeY = data.y;
+            }
+        }).begin();
 
-    requestAnimationFrame(loop);
+        webgazer.showPredictionPoints(true);
+        webgazer.showVideoPreview(true);
+
+        requestAnimationFrame(loop);
+    }
 });
 
-// לחיצת עכבר עוזרת לכיול ללמוד
+// שיפור דיוק על ידי לחיצות
 window.addEventListener('click', (e) => {
-    webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
+    if (window.webgazer) {
+        webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
+    }
 });
 
 function loop() {
-    // החלקת תנועה
     smoothX += (gazeX - smoothX) * 0.15;
     smoothY += (gazeY - smoothY) * 0.15;
 
@@ -101,7 +109,6 @@ function runExperience() {
     let overlay = document.getElementById("overlay");
     let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
     
-    // וידוא שהערכים תקינים לפני העדכון
     let x = isNaN(smoothX) ? window.innerWidth / 2 : smoothX;
     let y = isNaN(smoothY) ? window.innerHeight / 2 : smoothY;
 
