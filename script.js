@@ -4,111 +4,135 @@ let gazeX = window.innerWidth / 2;
 let gazeY = window.innerHeight / 2;
 let smoothX = gazeX;
 let smoothY = gazeY;
+
 let calibrated = false;
 let current = 0;
 let dwell = 0;
+
 const DWELL_TIME = 1000;
 
 const canvas = document.getElementById("calCanvas");
 const ctx = canvas.getContext("2d");
+
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 const calPoints = [
-    {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
-    {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
-    {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
-    {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
-    {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
+  {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
+  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
+  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
+  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
+  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
 ];
 
-// אתחול המערכת - סדר פעולות מתוקן
-window.addEventListener('load', async () => {
-    if (window.webgazer) {
-        // חייב לבוא לפני ה-begin() כדי למנוע את ה-404 ב-GitHub
-        webgazer.params.useMediaPipe = false; 
+// 🚀 אתחול
+window.onload = async () => {
+  if (!window.webgazer) return;
 
-        await webgazer.setGazeListener((data) => {
-            if (data) {
-                gazeX = data.x;
-                gazeY = data.y;
-            }
-        }).begin();
+  try {
+    webgazer.setRegression('ridge'); // הכי יציב
+    webgazer.setTracker('clmtrackr'); // 🔥 מבטל MediaPipe לגמרי
 
-        webgazer.showPredictionPoints(true);
-        webgazer.showVideoPreview(true);
+    await webgazer.setGazeListener((data) => {
+      if (data) {
+        gazeX = data.x;
+        gazeY = data.y;
+      }
+    }).begin();
 
-        requestAnimationFrame(loop);
-    }
-});
+    webgazer.showPredictionPoints(true);
+    webgazer.showVideoPreview(true);
 
-window.addEventListener('click', (e) => {
-    if (window.webgazer) webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
-});
-
-function loop() {
-    smoothX += (gazeX - smoothX) * 0.15;
-    smoothY += (gazeY - smoothY) * 0.15;
-
-    if (!calibrated) {
-        runCalibration();
-    } else {
-        runExperience();
-    }
     requestAnimationFrame(loop);
+
+  } catch (err) {
+    console.error("WebGazer error:", err);
+  }
+};
+
+// 🎯 קליקים לשיפור דיוק
+window.addEventListener('click', (e) => {
+  if (window.webgazer) {
+    webgazer.recordScreenPosition(e.clientX, e.clientY, 'click');
+  }
+});
+
+// 🔁 לופ ראשי
+function loop() {
+  smoothX += (gazeX - smoothX) * 0.15;
+  smoothY += (gazeY - smoothY) * 0.15;
+
+  if (!calibrated) {
+    runCalibration();
+  } else {
+    runExperience();
+  }
+
+  requestAnimationFrame(loop);
 }
 
+// 🎯 כיול
 function runCalibration() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    let p = calPoints[current];
-    let d = Math.hypot(smoothX - p.x, smoothY - p.y);
-    
-    if (d < 120) {
-        dwell += 16.6;
-    } else {
-        dwell = 0;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  let p = calPoints[current];
+  let d = Math.hypot(smoothX - p.x, smoothY - p.y);
+
+  if (d < 120) {
+    dwell += 16.6;
+  } else {
+    dwell = 0;
+  }
+
+  let progress = Math.min(dwell / DWELL_TIME, 1);
+
+  ctx.lineWidth = 3;
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(224, 58, 46, 0.3)";
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 40, -Math.PI/2, (-Math.PI/2) + progress * Math.PI * 2);
+  ctx.strokeStyle = "#E03A2E";
+  ctx.stroke();
+
+  if (progress >= 1) {
+    current++;
+    dwell = 0;
+
+    if (current >= calPoints.length) {
+      calibrated = true;
+      startPhase2();
     }
-
-    let progress = Math.min(dwell / DWELL_TIME, 1);
-
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(224, 58, 46, 0.3)";
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 40, -Math.PI/2, (-Math.PI/2) + progress * Math.PI * 2);
-    ctx.strokeStyle = "#E03A2E";
-    ctx.stroke();
-
-    if (progress >= 1) {
-        current++;
-        dwell = 0;
-        if (current >= calPoints.length) {
-            calibrated = true;
-            startPhase2();
-        }
-    }
+  }
 }
 
+// מעבר שלב
 function startPhase2() {
-    document.getElementById("phase1").classList.add("hidden");
-    document.getElementById("phase2").classList.remove("hidden");
-    webgazer.showPredictionPoints(false);
-    webgazer.showVideoPreview(false);
-    document.body.style.cursor = "none";
+  document.getElementById("phase1").classList.add("hidden");
+  document.getElementById("phase2").classList.remove("hidden");
+
+  webgazer.showPredictionPoints(false);
+  webgazer.showVideoPreview(false);
+
+  document.body.style.cursor = "none";
 }
 
+// 👁️ חוויית מבט
 function runExperience() {
-    let overlay = document.getElementById("overlay");
-    let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
-    
-    let x = isNaN(smoothX) ? window.innerWidth / 2 : smoothX;
-    let y = isNaN(smoothY) ? window.innerHeight / 2 : smoothY;
+  const overlay = document.getElementById("overlay");
 
-    overlay.style.background = `radial-gradient(circle at ${x}px ${y}px, 
-        transparent 0px, 
-        transparent ${radius}px, 
-        rgba(0,0,0,0.95) ${radius + 100}px)`;
+  let radius = 130 + Math.sin(Date.now() * 0.003) * 15;
+
+  let x = isNaN(smoothX) ? window.innerWidth / 2 : smoothX;
+  let y = isNaN(smoothY) ? window.innerHeight / 2 : smoothY;
+
+  overlay.style.background = `
+    radial-gradient(circle at ${x}px ${y}px,
+      transparent 0px,
+      transparent ${radius}px,
+      rgba(0,0,0,0.95) ${radius + 100}px)
+  `;
 }
