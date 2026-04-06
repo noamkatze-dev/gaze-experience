@@ -14,89 +14,96 @@ let calibrated = false;
 let calIndex = 0;
 
 const calPoints = [
-  {x: 200, y: 200},
-  {x: window.innerWidth - 200, y: 200},
-  {x: window.innerWidth - 200, y: window.innerHeight - 200},
-  {x: 200, y: window.innerHeight - 200},
-  {x: window.innerWidth / 2, y: window.innerHeight / 2}
+  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
+  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
+  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
+  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8},
+  {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5}
 ];
 
 // --------------------
-// WEBGAZER INIT
+// WEBGAZER
 // --------------------
 window.onload = async () => {
 
   if (!window.webgazer) return;
 
-  try {
-    // 🔥 התיקון הכי חשוב
-    webgazer.setTracker('TFFacemesh');
-    webgazer.setRegression('ridge');
+  webgazer.setTracker('TFFacemesh');
+  webgazer.setRegression('ridge');
 
-    await webgazer.begin();
+  await webgazer.begin();
 
-    webgazer.setGazeListener((data) => {
-      if (data) {
-        gazeX = data.x;
-        gazeY = data.y;
-      }
-    });
+  webgazer.setGazeListener((data) => {
+    if (data) {
+      gazeX = data.x;
+      gazeY = data.y;
+    }
+  });
 
-    webgazer.showVideoPreview(true);
-
-  } catch (e) {
-    console.error(e);
-  }
+  webgazer.showVideoPreview(true);
 };
 
 // --------------------
-// CAL CANVAS
+// CANVAS כיול
 // --------------------
-const calCanvas = document.getElementById("calCanvas");
-const ctx = calCanvas.getContext("2d", { willReadFrequently: true });
+const canvas = document.getElementById("calCanvas");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
-calCanvas.width = window.innerWidth;
-calCanvas.height = window.innerHeight;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-// קליקים לכיול
-window.addEventListener('click', (e) => {
-  if (!calibrated) {
-    let p = calPoints[calIndex];
-    let d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
-
-    if (d < 80) {
-      webgazer.recordScreenPosition(p.x, p.y, 'click');
-      calIndex++;
-
-      if (calIndex >= calPoints.length) {
-        calibrated = true;
-        document.getElementById("calibration").style.display = "none";
-        startP5();
-      }
-    }
-  }
-});
-
-// ציור כיול
+// ציור נקודה
 function drawCalibration() {
-  ctx.clearRect(0,0,calCanvas.width,calCanvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   let p = calPoints[calIndex];
 
   ctx.beginPath();
-  ctx.arc(p.x, p.y, 30, 0, Math.PI*2);
+  ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
   ctx.strokeStyle = "red";
+  ctx.lineWidth = 3;
   ctx.stroke();
 }
 
 // לופ כיול
-function calLoop() {
+function calibrationLoop() {
   if (!calibrated) {
     drawCalibration();
-    requestAnimationFrame(calLoop);
+    requestAnimationFrame(calibrationLoop);
   }
 }
-calLoop();
+calibrationLoop();
+
+// --------------------
+// קליקים לכיול (🔥 מתוקן)
+// --------------------
+window.addEventListener('click', (e) => {
+
+  if (!calibrated) {
+
+    let p = calPoints[calIndex];
+    let d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+
+    // 🔥 רדיוס גדול יותר
+    if (d < 150) {
+
+      webgazer.recordScreenPosition(p.x, p.y, 'click');
+      calIndex++;
+
+      if (calIndex >= calPoints.length) {
+
+        calibrated = true;
+
+        document.getElementById("calibration").style.display = "none";
+
+        // נותן רגע לדפדפן
+        setTimeout(() => {
+          startP5();
+        }, 200);
+      }
+    }
+  }
+});
 
 // --------------------
 // P5 SYSTEM
@@ -112,11 +119,11 @@ new p5((p) => {
   let currentFocus = null;
 
   p.preload = () => {
-    video = p.createVideo('CCCC.mp4'); // שימי את הקובץ בתיקייה
+    video = p.createVideo('CCCC.mp4'); // ודאי שהקובץ קיים
   };
 
   p.setup = () => {
-    p.createCanvas(270, 480);
+    p.createCanvas(window.innerWidth, window.innerHeight);
     video.hide();
     video.loop();
   };
@@ -124,6 +131,7 @@ new p5((p) => {
   p.draw = () => {
     p.background(0);
 
+    // וידאו
     p.image(video, 0, 0, p.width, p.height);
 
     analyzeFrame(p, edgeTexts);
@@ -146,7 +154,7 @@ new p5((p) => {
 // FOCUS
 // --------------------
 function detectFocus(gx, gy, edges, focusAreas, setCurrent) {
-  let radius = 40;
+  let radius = 80;
 
   for (let edge of edges) {
     let d = dist(gx, gy, edge.x, edge.y);
@@ -175,10 +183,10 @@ function drawLabels(p, focusAreas, currentFocus) {
       p.drawingContext.filter = "none";
     } else {
       p.fill(255, 0, 0, 120);
-      p.drawingContext.filter = "blur(3px)";
+      p.drawingContext.filter = "blur(4px)";
     }
 
-    p.textSize(10);
+    p.textSize(14);
     p.text(edge.text, edge.x, edge.y);
   }
 
@@ -192,7 +200,7 @@ function analyzeFrame(p, edgeTexts) {
 
   edgeTexts.length = 0;
 
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 30; i++) {
     edgeTexts.push({
       x: p.random(p.width),
       y: p.random(p.height),
