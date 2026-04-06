@@ -2,25 +2,24 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gaze System</title>
+  <title>Gaze Analysis System</title>
+
+  <!-- p5 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+  <!-- WebGazer -->
+  <script src="https://cdn.jsdelivr.net/npm/webgazer@2.1.0/dist/webgazer.min.js"></script>
+
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div id="phase1">
-  <h1>כיול חיישן אופטי</h1>
-  <p>הביטי בנקודה ולחצי עליה לשיפור הדיוק</p>
+<div id="calibration">
+  <h1>כיול</h1>
+  <p>הביטי בנקודות ולחצי עליהן</p>
   <canvas id="calCanvas"></canvas>
 </div>
 
-<div id="phase2" class="hidden">
-  <video id="bgVideo" autoplay muted loop playsinline>
-    <source src="Roman_Statue_Rotation_Video.mp4" type="video/mp4">
-  </video>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/webgazer@2.1.0/dist/webgazer.min.js"></script>
 <script src="script.js"></script>
 
 </body>
