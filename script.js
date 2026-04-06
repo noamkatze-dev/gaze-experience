@@ -1,5 +1,5 @@
 // --------------------
-// GLOBALS
+// GAZE
 // --------------------
 let gazeX = window.innerWidth / 2;
 let gazeY = window.innerHeight / 2;
@@ -7,6 +7,9 @@ let gazeY = window.innerHeight / 2;
 let smoothX = gazeX;
 let smoothY = gazeY;
 
+// --------------------
+// CALIBRATION
+// --------------------
 let calibrated = false;
 let calIndex = 0;
 
@@ -19,42 +22,43 @@ const calPoints = [
 ];
 
 // --------------------
-// VIDEO + ANALYSIS
-// --------------------
-let video;
-let edgeTexts = [];
-let focusAreas = [];
-let currentFocus = null;
-
-// --------------------
-// SETUP WEBGAZER
+// WEBGAZER INIT
 // --------------------
 window.onload = async () => {
 
-  webgazer.setRegression('ridge');
-  webgazer.setTracker('clmtrackr');
+  if (!window.webgazer) return;
 
-  await webgazer.begin();
+  try {
+    // 🔥 התיקון הכי חשוב
+    webgazer.setTracker('TFFacemesh');
+    webgazer.setRegression('ridge');
 
-  webgazer.setGazeListener((data) => {
-    if (data) {
-      gazeX = data.x;
-      gazeY = data.y;
-    }
-  });
+    await webgazer.begin();
 
-  webgazer.showVideoPreview(true);
+    webgazer.setGazeListener((data) => {
+      if (data) {
+        gazeX = data.x;
+        gazeY = data.y;
+      }
+    });
+
+    webgazer.showVideoPreview(true);
+
+  } catch (e) {
+    console.error(e);
+  }
 };
 
 // --------------------
-// CALIBRATION
+// CAL CANVAS
 // --------------------
 const calCanvas = document.getElementById("calCanvas");
-const ctx = calCanvas.getContext("2d");
+const ctx = calCanvas.getContext("2d", { willReadFrequently: true });
 
 calCanvas.width = window.innerWidth;
 calCanvas.height = window.innerHeight;
 
+// קליקים לכיול
 window.addEventListener('click', (e) => {
   if (!calibrated) {
     let p = calPoints[calIndex];
@@ -73,6 +77,7 @@ window.addEventListener('click', (e) => {
   }
 });
 
+// ציור כיול
 function drawCalibration() {
   ctx.clearRect(0,0,calCanvas.width,calCanvas.height);
 
@@ -84,6 +89,7 @@ function drawCalibration() {
   ctx.stroke();
 }
 
+// לופ כיול
 function calLoop() {
   if (!calibrated) {
     drawCalibration();
@@ -99,57 +105,54 @@ function startP5() {
 
 new p5((p) => {
 
-  let videoW, videoH;
+  let video;
+  let edgeTexts = [];
+
+  let focusAreas = [];
+  let currentFocus = null;
 
   p.preload = () => {
-    video = p.createVideo('CCCC.mp4');
+    video = p.createVideo('CCCC.mp4'); // שימי את הקובץ בתיקייה
   };
 
   p.setup = () => {
     p.createCanvas(270, 480);
     video.hide();
     video.loop();
-
-    video.elt.onloadeddata = () => {
-      videoW = video.width;
-      videoH = video.height;
-    };
   };
 
   p.draw = () => {
     p.background(0);
 
-    if (!videoW) return;
-
     p.image(video, 0, 0, p.width, p.height);
 
-    analyzeFrame(p);
+    analyzeFrame(p, edgeTexts);
 
-    // 👁️ מעקב מבט
+    // smoothing gaze
     smoothX += (gazeX - smoothX) * 0.15;
     smoothY += (gazeY - smoothY) * 0.15;
 
     let gx = p.map(smoothX, 0, window.innerWidth, 0, p.width);
     let gy = p.map(smoothY, 0, window.innerHeight, 0, p.height);
 
-    detectFocus(gx, gy);
-    drawLabels(p);
+    detectFocus(gx, gy, edgeTexts, focusAreas, (f)=> currentFocus = f);
+    drawLabels(p, focusAreas, currentFocus);
   };
 
 });
 }
 
 // --------------------
-// FOCUS SYSTEM
+// FOCUS
 // --------------------
-function detectFocus(gx, gy) {
+function detectFocus(gx, gy, edges, focusAreas, setCurrent) {
   let radius = 40;
 
-  for (let edge of edgeTexts) {
+  for (let edge of edges) {
     let d = dist(gx, gy, edge.x, edge.y);
 
     if (d < radius) {
-      currentFocus = edge;
+      setCurrent(edge);
 
       if (!focusAreas.includes(edge)) {
         focusAreas.push(edge);
@@ -161,7 +164,7 @@ function detectFocus(gx, gy) {
 // --------------------
 // DRAW LABELS
 // --------------------
-function drawLabels(p) {
+function drawLabels(p, focusAreas, currentFocus) {
 
   for (let edge of focusAreas) {
 
@@ -169,14 +172,13 @@ function drawLabels(p) {
 
     if (isCurrent) {
       p.fill(255, 0, 0);
-      p.textSize(10);
       p.drawingContext.filter = "none";
     } else {
       p.fill(255, 0, 0, 120);
-      p.textSize(10);
-      p.drawingContext.filter = "blur(2px)";
+      p.drawingContext.filter = "blur(3px)";
     }
 
+    p.textSize(10);
     p.text(edge.text, edge.x, edge.y);
   }
 
@@ -184,17 +186,17 @@ function drawLabels(p) {
 }
 
 // --------------------
-// ANALYSIS (פשוט)
+// ANALYSIS (דמו)
 // --------------------
-function analyzeFrame(p) {
+function analyzeFrame(p, edgeTexts) {
 
-  edgeTexts = [];
+  edgeTexts.length = 0;
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 25; i++) {
     edgeTexts.push({
-      x: random(p.width),
-      y: random(p.height),
-      text: "EDGE"
+      x: p.random(p.width),
+      y: p.random(p.height),
+      text: "DATA"
     });
   }
 }
