@@ -2,25 +2,16 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>Gaze System</title>
+  <title>Gaze System - ml5.js Edition</title>
 
-  <!-- p5 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-
-  <!-- WebGazer -->
-  <script src="https://cdn.jsdelivr.net/npm/webgazer@2.1.0/dist/webgazer.min.js"></script>
+  
+  <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
 
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<div id="calibration">
-  <h1>כיול</h1>
-  <p>לחצי על הנקודות לפי הסדר</p>
-  <canvas id="calCanvas"></canvas>
-</div>
-
-<script src="script.js"></script>
-
+  <div id="status-msg">טוען מודל בינה מלאכותית...</div>
+  <script src="script.js"></script>
 </body>
 </html>
