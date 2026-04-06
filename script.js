@@ -1,117 +1,200 @@
-window.saveDataAcrossSessions = false;
-
+// --------------------
+// GLOBALS
+// --------------------
 let gazeX = window.innerWidth / 2;
 let gazeY = window.innerHeight / 2;
+
 let smoothX = gazeX;
 let smoothY = gazeY;
 
 let calibrated = false;
-let current = 0;
-let dwell = 0;
-
-const DWELL_TIME = 1000;
-
-const canvas = document.getElementById("calCanvas");
-const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+let calIndex = 0;
 
 const calPoints = [
-  {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5},
-  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
-  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
-  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
-  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8}
+  {x: 200, y: 200},
+  {x: window.innerWidth - 200, y: 200},
+  {x: window.innerWidth - 200, y: window.innerHeight - 200},
+  {x: 200, y: window.innerHeight - 200},
+  {x: window.innerWidth / 2, y: window.innerHeight / 2}
 ];
 
+// --------------------
+// VIDEO + ANALYSIS
+// --------------------
+let video;
+let edgeTexts = [];
+let focusAreas = [];
+let currentFocus = null;
+
+// --------------------
+// SETUP WEBGAZER
+// --------------------
 window.onload = async () => {
-  if (!window.webgazer) return;
 
-  try {
-    webgazer.setRegression('ridge');
-    webgazer.setTracker('clmtrackr');
+  webgazer.setRegression('ridge');
+  webgazer.setTracker('clmtrackr');
 
-    await webgazer.begin();
+  await webgazer.begin();
 
-    webgazer.setGazeListener((data) => {
-      if (data) {
-        gazeX = data.x;
-        gazeY = data.y;
-      }
-    });
+  webgazer.setGazeListener((data) => {
+    if (data) {
+      gazeX = data.x;
+      gazeY = data.y;
+    }
+  });
 
-    webgazer.showPredictionPoints(true);
-    webgazer.showVideoPreview(true);
-
-    requestAnimationFrame(loop);
-
-  } catch (err) {
-    console.error(err);
-  }
+  webgazer.showVideoPreview(true);
 };
 
-// קליק רק על נקודת כיול
+// --------------------
+// CALIBRATION
+// --------------------
+const calCanvas = document.getElementById("calCanvas");
+const ctx = calCanvas.getContext("2d");
+
+calCanvas.width = window.innerWidth;
+calCanvas.height = window.innerHeight;
+
 window.addEventListener('click', (e) => {
   if (!calibrated) {
-    let p = calPoints[current];
+    let p = calPoints[calIndex];
     let d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
 
     if (d < 80) {
       webgazer.recordScreenPosition(p.x, p.y, 'click');
+      calIndex++;
+
+      if (calIndex >= calPoints.length) {
+        calibrated = true;
+        document.getElementById("calibration").style.display = "none";
+        startP5();
+      }
     }
   }
 });
 
-function loop() {
-  smoothX += (gazeX - smoothX) * 0.15;
-  smoothY += (gazeY - smoothY) * 0.15;
+function drawCalibration() {
+  ctx.clearRect(0,0,calCanvas.width,calCanvas.height);
 
-  if (!calibrated) runCalibration();
+  let p = calPoints[calIndex];
 
-  requestAnimationFrame(loop);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 30, 0, Math.PI*2);
+  ctx.strokeStyle = "red";
+  ctx.stroke();
 }
 
-function runCalibration() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function calLoop() {
+  if (!calibrated) {
+    drawCalibration();
+    requestAnimationFrame(calLoop);
+  }
+}
+calLoop();
 
-  let p = calPoints[current];
-  let d = Math.hypot(smoothX - p.x, smoothY - p.y);
+// --------------------
+// P5 SYSTEM
+// --------------------
+function startP5() {
 
-  if (d < 120) dwell += 16.6;
-  else dwell = 0;
+new p5((p) => {
 
-  let progress = Math.min(dwell / DWELL_TIME, 1);
+  let videoW, videoH;
 
-  ctx.lineWidth = 3;
+  p.preload = () => {
+    video = p.createVideo('CCCC.mp4');
+  };
 
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(224, 58, 46, 0.3)";
-  ctx.stroke();
+  p.setup = () => {
+    p.createCanvas(270, 480);
+    video.hide();
+    video.loop();
 
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 40, -Math.PI/2, (-Math.PI/2) + progress * Math.PI * 2);
-  ctx.strokeStyle = "#E03A2E";
-  ctx.stroke();
+    video.elt.onloadeddata = () => {
+      videoW = video.width;
+      videoH = video.height;
+    };
+  };
 
-  if (progress >= 1) {
-    current++;
-    dwell = 0;
+  p.draw = () => {
+    p.background(0);
 
-    if (current >= calPoints.length) {
-      calibrated = true;
-      startPhase2();
+    if (!videoW) return;
+
+    p.image(video, 0, 0, p.width, p.height);
+
+    analyzeFrame(p);
+
+    // 👁️ מעקב מבט
+    smoothX += (gazeX - smoothX) * 0.15;
+    smoothY += (gazeY - smoothY) * 0.15;
+
+    let gx = p.map(smoothX, 0, window.innerWidth, 0, p.width);
+    let gy = p.map(smoothY, 0, window.innerHeight, 0, p.height);
+
+    detectFocus(gx, gy);
+    drawLabels(p);
+  };
+
+});
+}
+
+// --------------------
+// FOCUS SYSTEM
+// --------------------
+function detectFocus(gx, gy) {
+  let radius = 40;
+
+  for (let edge of edgeTexts) {
+    let d = dist(gx, gy, edge.x, edge.y);
+
+    if (d < radius) {
+      currentFocus = edge;
+
+      if (!focusAreas.includes(edge)) {
+        focusAreas.push(edge);
+      }
     }
   }
 }
 
-function startPhase2() {
-  document.getElementById("phase1").classList.add("hidden");
-  document.getElementById("phase2").classList.remove("hidden");
+// --------------------
+// DRAW LABELS
+// --------------------
+function drawLabels(p) {
 
-  webgazer.showPredictionPoints(false);
-  webgazer.showVideoPreview(false);
+  for (let edge of focusAreas) {
 
-  document.body.style.cursor = "none";
+    let isCurrent = edge === currentFocus;
+
+    if (isCurrent) {
+      p.fill(255, 0, 0);
+      p.textSize(10);
+      p.drawingContext.filter = "none";
+    } else {
+      p.fill(255, 0, 0, 120);
+      p.textSize(10);
+      p.drawingContext.filter = "blur(2px)";
+    }
+
+    p.text(edge.text, edge.x, edge.y);
+  }
+
+  p.drawingContext.filter = "none";
+}
+
+// --------------------
+// ANALYSIS (פשוט)
+// --------------------
+function analyzeFrame(p) {
+
+  edgeTexts = [];
+
+  for (let i = 0; i < 20; i++) {
+    edgeTexts.push({
+      x: random(p.width),
+      y: random(p.height),
+      text: "EDGE"
+    });
+  }
 }
