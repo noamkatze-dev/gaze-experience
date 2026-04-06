@@ -1,14 +1,601 @@
 <!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="he">
 <head>
-  <meta charset="UTF-8">
-  <title>Gaze System - Final Project</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<title>Eye Scan — Iris Tracking</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+
+  /* webcam hidden — only used for tracking */
+  #webcam { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+
+  /* calibration screen */
+  #cal {
+    position: fixed; inset: 0; background: #fff;
+    z-index: 9999; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 28px;
+  }
+  #cal h1 { font-size: 10px; letter-spacing: 0.28em; color: #bbb; font-weight: 400; text-transform: uppercase; }
+  #cal p  { font-size: 9px; color: #ccc; letter-spacing: 0.1em; line-height: 2.4; text-align: center; max-width: 320px; }
+  #cal p b { color: #e03a2e; font-weight: 400; }
+
+  /* calibration dots — 5 points: center + 4 corners */
+  #cal-stage {
+    position: relative; width: 340px; height: 220px;
+    border: 0.5px solid #eee;
+  }
+  .cal-pt {
+    position: absolute; width: 20px; height: 20px;
+    border-radius: 50%; background: #eee; border: 1px solid #ddd;
+    transform: translate(-50%, -50%);
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cal-pt:hover { border-color: #e03a2e; background: #fde; }
+  .cal-pt.active { background: #e03a2e; border-color: #e03a2e; animation: pulse 0.6s ease-in-out infinite; }
+  .cal-pt.done   { background: #e03a2e; border-color: #e03a2e; transform: translate(-50%,-50%) scale(0.6); }
+  .cal-pt span   { font-size: 7px; color: #fff; opacity: 0; }
+  .cal-pt.done span { opacity: 1; }
+  @keyframes pulse { 0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.25)} }
+
+  #cal-instruction { font-size: 9px; color: #bbb; letter-spacing: 0.1em; height: 20px; text-align: center; }
+  #cal-btn {
+    font-family: 'Courier New', monospace; font-size: 9px;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    border: 0.5px solid #ddd; background: none;
+    padding: 11px 30px; cursor: pointer; color: #ccc;
+    opacity: 0.25; pointer-events: none; transition: all 0.2s;
+  }
+  #cal-btn.ready { opacity: 1; pointer-events: all; color: #e03a2e; border-color: #e03a2e; }
+  #cal-btn.ready:hover { background: #e03a2e; color: #fff; }
+
+  /* HUD */
+  #hud {
+    position: fixed; bottom: 18px; left: 18px;
+    font-size: 8px; color: rgba(224,58,46,0.4);
+    letter-spacing: 0.14em; line-height: 2.2;
+    pointer-events: none; z-index: 100;
+  }
+
+  /* small iris debug view */
+  #iris-debug {
+    position: fixed; top: 12px; right: 12px;
+    width: 80px; height: 50px;
+    border: 0.5px solid rgba(224,58,46,0.2);
+    pointer-events: none; z-index: 100;
+    display: none;
+  }
+</style>
 </head>
 <body>
-  <div id="loading">טוען מערכת מעקב עיניים...</div>
-  <script src="script.js"></script>
+
+<video id="webcam" autoplay playsinline></video>
+<canvas id="iris-debug"></canvas>
+
+<div id="cal">
+  <h1>Eye Scan — Iris Calibration</h1>
+  <p>
+    הסתכלי ישירות על כל <b>נקודה אדומה</b> לפי הסדר.<br>
+    המערכת לומדת לאן האישונים שלך מסתכלים.
+  </p>
+  <div id="cal-stage"></div>
+  <div id="cal-instruction">המתיני לטעינה...</div>
+  <button id="cal-btn">START SCAN →</button>
+</div>
+
+<div id="hud">
+  <div id="h-status">LOADING...</div>
+  <div id="h-iris">IRIS — —</div>
+  <div id="h-gaze">GAZE — —</div>
+  <div id="h-zones">ZONES 0 / 0</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+<script>
+// ═══════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════
+const USE_VIDEO  = false;       // true = use CCCC.mp4 as background
+const VIDEO_FILE = 'CCCC.mp4';
+const COLS = 5, ROWS = 7;
+const BLUR_MAX    = 5.5;
+const FADE_SPEED  = 0.08;
+const SHOW_DEBUG  = true;       // iris mini-debug top-right
+
+// MediaPipe iris landmark indices
+// Right iris center = 468, Left iris center = 473
+// Right eye corners: 33 (outer), 133 (inner)
+// Left eye corners:  362 (inner), 263 (outer)
+const IDX = {
+  rightIris:   468,
+  leftIris:    473,
+  rightOuter:  33,
+  rightInner:  133,
+  leftInner:   362,
+  leftOuter:   263,
+  rightTop:    159,
+  rightBottom: 145,
+  leftTop:     386,
+  leftBottom:  374,
+};
+
+// ═══════════════════════════════════════════
+//  CALIBRATION DATA
+// calibration maps iris offset → screen (x,y)
+// 5 reference points: TL, TR, C, BL, BR
+// ═══════════════════════════════════════════
+const CAL_POINTS = [
+  { sx: 0.15, sy: 0.15 },  // TL
+  { sx: 0.85, sy: 0.15 },  // TR
+  { sx: 0.50, sy: 0.50 },  // Center
+  { sx: 0.15, sy: 0.85 },  // BL
+  { sx: 0.85, sy: 0.85 },  // BR
+];
+
+let calSamples = [];  // [{irisX, irisY, screenX, screenY}]
+let calStep    = -1;  // current calibration point index (-1 = waiting)
+let calDone    = false;
+let calModel   = null; // learned linear regression
+
+// ═══════════════════════════════════════════
+//  GAZE STATE
+// ═══════════════════════════════════════════
+let gazeX = -1, gazeY = -1;   // screen coordinates
+let rawIrisX = 0, rawIrisY = 0; // raw iris offset (-1..1)
+let irisVisible = false;
+let zones = [];
+let vid;
+
+// ═══════════════════════════════════════════
+//  DATA VOCAB
+// ═══════════════════════════════════════════
+const DATA_ROWS = [
+  ['VERTICAL','CONTRAST_HIGH','87%'],
+  ['HORIZONTAL','STAB_100','0.024s'],
+  ['CRITICAL','MOTION_FAST','∆_0.003'],
+  ['DETAIL','BRIGHT_167','92%'],
+  ['EDGES','CONTRAST_MED','0.031s'],
+  ['STATIC','STAB_88','∆_0.005'],
+  ['MOTION →','BRIGHT_142','88%'],
+  ['CIRCLES','CAM_DIRECT','0.018s'],
+  ['CURVES','CONTRAST_LOW','∆_0.002'],
+  ['CORNERS','MOTION_SLOW','0.027s'],
+];
+const SYMS = ['%','→','∆','//'];
+function pick(a) { return a[Math.floor(Math.random()*a.length)]; }
+function makeData() {
+  const d = pick(DATA_ROWS);
+  return { a: d[0], b: d[1], c: d[2], sym: pick(SYMS),
+           noise: (Math.random()*999).toFixed(3)+'s' };
+}
+
+// ═══════════════════════════════════════════
+//  BUILD CALIBRATION UI
+// ═══════════════════════════════════════════
+const stage = document.getElementById('cal-stage');
+const calDots = [];
+CAL_POINTS.forEach((pt, i) => {
+  const el = document.createElement('div');
+  el.className = 'cal-pt';
+  el.style.left = (pt.sx * 100) + '%';
+  el.style.top  = (pt.sy * 100) + '%';
+  el.innerHTML  = '<span>✓</span>';
+  el.dataset.idx = i;
+  stage.appendChild(el);
+  calDots.push(el);
+});
+
+// ═══════════════════════════════════════════
+//  MEDIAPIPE FACE MESH INIT
+// ═══════════════════════════════════════════
+const webcamEl = document.getElementById('webcam');
+let faceMesh;
+
+async function initFaceMesh() {
+  faceMesh = new FaceMesh({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+  });
+
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,   // enables iris landmarks (478 total)
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence:  0.5,
+  });
+
+  faceMesh.onResults(onFaceResults);
+
+  // start webcam
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: 640, height: 480, facingMode: 'user' }
+  });
+  webcamEl.srcObject = stream;
+  await webcamEl.play();
+
+  // camera utils loop
+  const camera = new Camera(webcamEl, {
+    onFrame: async () => { await faceMesh.send({ image: webcamEl }); },
+    width: 640, height: 480
+  });
+  camera.start();
+
+  document.getElementById('h-status').textContent = 'IRIS TRACKING ACTIVE';
+  document.getElementById('cal-instruction').textContent =
+    'הסתכלי על הנקודה הראשונה ולחצי עליה';
+  activateCalPoint(0);
+}
+
+// ═══════════════════════════════════════════
+//  FACE MESH RESULTS
+// ═══════════════════════════════════════════
+function onFaceResults(results) {
+  if (!results.multiFaceLandmarks || !results.multiFaceLandmarks.length) {
+    irisVisible = false;
+    return;
+  }
+
+  const lm = results.multiFaceLandmarks[0];
+  if (lm.length < 478) { irisVisible = false; return; } // need refined landmarks
+
+  irisVisible = true;
+
+  // average both irises for stability
+  const ri = lm[IDX.rightIris];
+  const li = lm[IDX.leftIris];
+  const irisNX = (ri.x + li.x) / 2;
+  const irisNY = (ri.y + li.y) / 2;
+
+  // compute iris offset relative to eye width (normalised)
+  // right eye: how far iris is between outer and inner corners
+  const rOuter = lm[IDX.rightOuter];
+  const rInner = lm[IDX.rightInner];
+  const lInner = lm[IDX.leftInner];
+  const lOuter = lm[IDX.leftOuter];
+  const rTop   = lm[IDX.rightTop];
+  const rBot   = lm[IDX.rightBottom];
+  const lTop   = lm[IDX.leftTop];
+  const lBot   = lm[IDX.leftBottom];
+
+  // H offset: -1 (right) → 0 (center) → 1 (left)
+  const rEyeW  = Math.abs(rInner.x - rOuter.x);
+  const lEyeW  = Math.abs(lOuter.x - lInner.x);
+  const rOffH  = rEyeW > 0 ? (ri.x - (rOuter.x + rInner.x)/2) / rEyeW : 0;
+  const lOffH  = lEyeW > 0 ? (li.x - (lInner.x + lOuter.x)/2) / lEyeW : 0;
+
+  // V offset
+  const rEyeH  = Math.abs(rBot.y - rTop.y);
+  const lEyeH  = Math.abs(lBot.y - lTop.y);
+  const rOffV  = rEyeH > 0 ? (ri.y - (rTop.y + rBot.y)/2) / rEyeH : 0;
+  const lOffV  = lEyeH > 0 ? (li.y - (lTop.y + lBot.y)/2) / lEyeH : 0;
+
+  // average, flip horizontal (mirror)
+  rawIrisX = -((rOffH + lOffH) / 2);
+  rawIrisY =  (rOffV + lOffV)  / 2;
+
+  // map to screen via calibration model
+  if (calModel) {
+    gazeX = calModel.ax * rawIrisX + calModel.bx;
+    gazeY = calModel.ay * rawIrisY + calModel.by;
+    gazeX = Math.max(0, Math.min(window.innerWidth,  gazeX));
+    gazeY = Math.max(0, Math.min(window.innerHeight, gazeY));
+  }
+
+  // debug draw
+  if (SHOW_DEBUG) drawDebug(ri, li, lm);
+
+  // if in calibration — collect sample for current point
+  if (calStep >= 0 && calStep < CAL_POINTS.length && !calDone) {
+    collectCalSample();
+  }
+
+  document.getElementById('h-iris').textContent =
+    `IRIS  X:${rawIrisX.toFixed(3)}  Y:${rawIrisY.toFixed(3)}`;
+}
+
+// ═══════════════════════════════════════════
+//  DEBUG CANVAS
+// ═══════════════════════════════════════════
+const dbg = document.getElementById('iris-debug');
+const dg  = dbg.getContext('2d');
+if (SHOW_DEBUG) dbg.style.display = 'block';
+
+function drawDebug(ri, li, lm) {
+  const W = dbg.width, H = dbg.height;
+  dg.fillStyle = '#050505';
+  dg.fillRect(0,0,W,H);
+  // right iris
+  dg.fillStyle = '#e03a2e';
+  dg.beginPath();
+  dg.arc(ri.x * W, ri.y * H, 2, 0, Math.PI*2);
+  dg.fill();
+  // left iris
+  dg.beginPath();
+  dg.arc(li.x * W, li.y * H, 2, 0, Math.PI*2);
+  dg.fill();
+  // eye corners faint
+  dg.fillStyle = 'rgba(224,58,46,0.3)';
+  [[IDX.rightOuter,IDX.rightInner],[IDX.leftInner,IDX.leftOuter]].forEach(([a,b]) => {
+    [a,b].forEach(i => {
+      const p = lm[i];
+      dg.beginPath(); dg.arc(p.x*W, p.y*H, 1, 0, Math.PI*2); dg.fill();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════
+//  CALIBRATION LOGIC
+// ═══════════════════════════════════════════
+let calBuffer = [];   // accumulate iris samples for this point
+let calActive = false;
+
+function activateCalPoint(i) {
+  if (i >= CAL_POINTS.length) return;
+  calStep   = i;
+  calActive = false;
+  calBuffer = [];
+  calDots.forEach((d,j) => {
+    d.classList.remove('active');
+    if (j < i) d.classList.add('done');
+  });
+  calDots[i].classList.add('active');
+  document.getElementById('cal-instruction').textContent =
+    `נקודה ${i+1}/5 — הסתכלי ולחצי`;
+
+  // click to record
+  calDots[i].onclick = () => {
+    if (!irisVisible) {
+      document.getElementById('cal-instruction').textContent = 'לא מזוהה פנים — נסי שוב';
+      return;
+    }
+    collectCalSample(true); // force-commit
+    calDots[i].classList.remove('active');
+    calDots[i].classList.add('done');
+
+    if (i + 1 < CAL_POINTS.length) {
+      activateCalPoint(i + 1);
+    } else {
+      finishCalibration();
+    }
+  };
+}
+
+function collectCalSample(commit) {
+  if (!irisVisible) return;
+  calBuffer.push({ ix: rawIrisX, iy: rawIrisY });
+
+  if (commit || calBuffer.length > 30) {
+    // average buffer
+    const avgX = calBuffer.reduce((s,p)=>s+p.ix,0) / calBuffer.length;
+    const avgY = calBuffer.reduce((s,p)=>s+p.iy,0) / calBuffer.length;
+    const pt   = CAL_POINTS[calStep];
+    calSamples.push({
+      irisX: avgX, irisY: avgY,
+      screenX: pt.sx * window.innerWidth,
+      screenY: pt.sy * window.innerHeight,
+    });
+    calBuffer = [];
+  }
+}
+
+function finishCalibration() {
+  // linear regression: screen = a * iris + b (separately for X and Y)
+  const n = calSamples.length;
+  if (n < 3) { alert('לא מספיק נתוני כיול — נסי שוב'); return; }
+
+  let sumIx=0, sumSx=0, sumIx2=0, sumIxSx=0;
+  let sumIy=0, sumSy=0, sumIy2=0, sumIySy=0;
+  calSamples.forEach(s => {
+    sumIx  += s.irisX;  sumSx  += s.screenX;
+    sumIx2 += s.irisX * s.irisX; sumIxSx += s.irisX * s.screenX;
+    sumIy  += s.irisY;  sumSy  += s.screenY;
+    sumIy2 += s.irisY * s.irisY; sumIySy += s.irisY * s.screenY;
+  });
+
+  const ax = (n * sumIxSx - sumIx * sumSx) / (n * sumIx2 - sumIx * sumIx);
+  const bx = (sumSx - ax * sumIx) / n;
+  const ay = (n * sumIySy - sumIy * sumSy) / (n * sumIy2 - sumIy * sumIy);
+  const by = (sumSy - ay * sumIy) / n;
+
+  calModel = { ax, bx, ay, by };
+  calDone = true;
+
+  document.getElementById('cal-btn').classList.add('ready');
+  document.getElementById('cal-instruction').textContent = 'כיול הושלם ✓';
+}
+
+document.getElementById('cal-btn').addEventListener('click', () => {
+  document.getElementById('cal').style.display = 'none';
+  startSketch();
+});
+
+// ═══════════════════════════════════════════
+//  p5 SKETCH
+// ═══════════════════════════════════════════
+function startSketch() {
+  new p5(p => {
+
+    p.setup = () => {
+      p.createCanvas(window.innerWidth, window.innerHeight);
+      p.textFont('Courier New');
+      buildZones(p);
+
+      if (USE_VIDEO) {
+        vid = p.createVideo(VIDEO_FILE);
+        vid.hide(); vid.volume(0); vid.loop();
+      }
+    };
+
+    p.draw = () => {
+      p.background(0);
+
+      // background
+      if (USE_VIDEO && vid && vid.width > 0) drawCover(p);
+      else drawBg(p);
+
+      updateZones();
+      drawZones(p);
+      drawCursor(p);
+      updateHUD();
+    };
+
+    p.windowResized = () => {
+      p.resizeCanvas(window.innerWidth, window.innerHeight);
+      buildZones(p);
+    };
+
+    // ── ZONES ──
+    function buildZones(p) {
+      zones = [];
+      const zW = p.width / COLS, zH = p.height / ROWS;
+      for (let r = 0; r < ROWS; r++)
+        for (let c = 0; c < COLS; c++)
+          zones.push({ x:c*zW, y:r*zH, w:zW, h:zH,
+                       reveal:0, visited:false, data:makeData() });
+    }
+
+    function updateZones() {
+      if (gazeX < 0) return;
+      const R = Math.min(window.innerWidth/COLS, window.innerHeight/ROWS) * 0.6;
+      zones.forEach(z => {
+        const cx = z.x + z.w/2, cy = z.y + z.h/2;
+        const d  = Math.hypot(gazeX - cx, gazeY - cy);
+        if (d < R) { z.visited = true; z.reveal = Math.min(1, z.reveal + FADE_SPEED); }
+        if (z.visited && z.reveal < 0.10) z.reveal = 0.10;
+      });
+    }
+
+    function drawZones(p) {
+      const R = Math.min(window.innerWidth/COLS, window.innerHeight/ROWS) * 0.6;
+      zones.forEach(z => {
+        if (!z.visited) return;
+        const cx = z.x + z.w/2, cy = z.y + z.h/2;
+        const dist = Math.hypot(gazeX - cx, gazeY - cy);
+        const prox = Math.max(0, 1 - dist / R);
+        const gazingNow = prox > 0.05;
+
+        // KEY LOGIC:
+        // gazingNow  → blur=0 (sharp), full alpha
+        // visited but not gazing → blurred
+        const blurAmt = gazingNow ? 0 : BLUR_MAX;
+        const alpha   = gazingNow ? z.reveal : z.reveal * 0.45;
+
+        if (alpha < 0.02) return;
+
+        const lx = z.x + 10;
+
+        drawBlur(p, z.data.a, lx, z.y + z.h*0.30, blurAmt,      alpha,       18);
+        drawBlur(p, z.data.b, lx, z.y + z.h*0.52, blurAmt*1.2,  alpha*0.72,  9);
+        drawBlur(p, z.data.c, lx, z.y + z.h*0.68, blurAmt*1.5,  alpha*0.52,  11);
+
+        if (gazingNow && prox > 0.5) {
+          drawBlur(p, z.data.sym,  lx, z.y + z.h*0.82, 0, prox*alpha*0.5, 8);
+          drawBlur(p, z.data.noise, lx, z.y + z.h*0.92, 0, prox*0.22, 7);
+        }
+
+        // border
+        p.noFill();
+        p.stroke(224, 58, 46, (gazingNow ? 35 : 9) * z.reveal);
+        p.strokeWeight(0.5);
+        p.rect(z.x+1, z.y+1, z.w-2, z.h-2);
+        p.noStroke();
+
+        // crosshair
+        if (gazingNow && prox > 0.5) {
+          p.stroke(224, 58, 46, prox * 25);
+          p.strokeWeight(0.5);
+          p.drawingContext.setLineDash([2,6]);
+          p.line(z.x, cy, z.x+z.w, cy);
+          p.line(cx, z.y, cx, z.y+z.h);
+          p.drawingContext.setLineDash([]);
+          p.noStroke();
+        }
+      });
+    }
+
+    // layered blur simulation
+    function drawBlur(p, text, x, y, blur, alpha, size) {
+      if (alpha < 0.01 || !text) return;
+      p.textSize(size); p.textAlign(p.LEFT, p.BASELINE);
+      if (blur < 0.15) {
+        p.fill(224, 58, 46, alpha * 255);
+        p.text(text, x, y);
+        return;
+      }
+      for (let l = 0; l < 5; l++) {
+        const sp = blur * (l+1) * 1.2;
+        const a  = Math.max(0, (alpha*255/5) * (1.1 - l*0.18));
+        p.fill(224, 58, 46, a);
+        p.text(text, x + sp*0.35, y + sp*0.15);
+        p.text(text, x - sp*0.35, y - sp*0.15);
+        p.text(text, x, y);
+      }
+    }
+
+    // placeholder background
+    function drawBg(p) {
+      p.background(6);
+      const cx = p.width/2, cy = p.height/2;
+      p.noFill(); p.stroke(22); p.strokeWeight(0.5);
+      for (let x=0; x<p.width;  x+=58) p.line(x,0,x,p.height);
+      for (let y=0; y<p.height; y+=58) p.line(0,y,p.width,y);
+      p.stroke(30);
+      p.ellipse(cx,cy, p.width*0.52, p.height*0.70);
+      p.ellipse(cx,cy, p.width*0.28, p.height*0.38);
+      p.line(cx-p.width*0.28,cy, cx+p.width*0.28,cy);
+      p.line(cx, cy-p.height*0.36, cx, cy+p.height*0.36);
+      p.noStroke();
+    }
+
+    function drawCover(p) {
+      const vr=vid.width/vid.height, cr=p.width/p.height;
+      let dw,dh,ox,oy;
+      if(vr>cr){dh=p.height;dw=vr*dh;ox=(p.width-dw)/2;oy=0;}
+      else{dw=p.width;dh=dw/vr;ox=0;oy=(p.height-dh)/2;}
+      p.image(vid,ox,oy,dw,dh);
+    }
+
+    // gaze cursor
+    function drawCursor(p) {
+      if (gazeX < 0) return;
+      if (!irisVisible) return;
+      const t = p.millis()/1000;
+      const r = 60 * (0.93 + 0.05*Math.sin(t*2.2));
+      p.noFill();
+      p.stroke(224,58,46,16); p.strokeWeight(0.5);
+      p.ellipse(gazeX,gazeY,r*2,r*2);
+      p.noStroke();
+      p.fill(224,58,46,140);
+      p.ellipse(gazeX,gazeY,5,5);
+      p.stroke(224,58,46,60); p.strokeWeight(0.5);
+      p.line(gazeX-12,gazeY,gazeX+12,gazeY);
+      p.line(gazeX,gazeY-12,gazeX,gazeY+12);
+      p.noStroke();
+    }
+
+    function updateHUD() {
+      const v = zones.filter(z=>z.visited).length;
+      document.getElementById('h-gaze').textContent =
+        `GAZE  X:${Math.round(gazeX)}  Y:${Math.round(gazeY)}`;
+      document.getElementById('h-zones').textContent =
+        `ZONES  ${v} / ${zones.length}`;
+      document.getElementById('h-status').textContent =
+        irisVisible ? 'IRIS DETECTED ●' : 'IRIS LOST ○';
+    }
+
+  });
+}
+
+// ═══════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════
+initFaceMesh().catch(e => {
+  document.getElementById('h-status').textContent = 'ERROR: ' + e.message;
+  document.getElementById('cal-instruction').textContent = 'שגיאה — בדקי הרשאות מצלמה';
+});
+</script>
 </body>
 </html>
