@@ -99,8 +99,8 @@
 // ═══════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════
-const USE_VIDEO  = false;       // true = use CCCC.mp4 as background
-const VIDEO_FILE = 'CCCC.mp4';
+const USE_VIDEO  = true;
+const VIDEO_FILE = 'Roman_Statue_Rotation_Video.mp4';
 const COLS = 5, ROWS = 7;
 const BLUR_MAX    = 5.5;
 const FADE_SPEED  = 0.08;
@@ -425,7 +425,16 @@ function startSketch() {
 
       if (USE_VIDEO) {
         vid = p.createVideo(VIDEO_FILE);
-        vid.hide(); vid.volume(0); vid.loop();
+        vid.hide();
+        vid.volume(0);
+        vid.elt.setAttribute('playsinline', '');
+        vid.elt.loop = true;
+        vid.elt.addEventListener('canplay', () => {
+          vid.elt.play();
+        });
+        vid.elt.addEventListener('error', () => {
+          document.getElementById('h-status').textContent = 'VIDEO ERROR — check filename';
+        });
       }
     };
 
@@ -433,7 +442,7 @@ function startSketch() {
       p.background(0);
 
       // background
-      if (USE_VIDEO && vid && vid.width > 0) drawCover(p);
+      if (USE_VIDEO && vid && vid.elt.readyState >= 2) drawCover(p);
       else drawBg(p);
 
       updateZones();
@@ -551,7 +560,10 @@ function startSketch() {
     }
 
     function drawCover(p) {
-      const vr=vid.width/vid.height, cr=p.width/p.height;
+      const vw = vid.elt.videoWidth  || vid.width;
+      const vh = vid.elt.videoHeight || vid.height;
+      if (!vw || !vh) return;
+      const vr=vw/vh, cr=p.width/p.height;
       let dw,dh,ox,oy;
       if(vr>cr){dh=p.height;dw=vr*dh;ox=(p.width-dw)/2;oy=0;}
       else{dw=p.width;dh=dw/vr;ox=0;oy=(p.height-dh)/2;}
