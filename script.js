@@ -1,167 +1,97 @@
-// --------------------
-// GAZE
-// --------------------
-let gazeX = window.innerWidth / 2;
-let gazeY = window.innerHeight / 2;
+let faceMesh;
+let video;
+let faces = [];
+let myVideo; // הסרט CCCC.mp4
+let gazeX = 0;
+let gazeY = 0;
+let smoothX = 0;
+let smoothY = 0;
 
-let smoothX = gazeX;
-let smoothY = gazeY;
+let edgeTexts = [];
+let focusAreas = [];
+let currentFocus = null;
 
-// --------------------
-// CALIBRATION
-// --------------------
-let calibrated = false;
-let calIndex = 0;
-
-const calPoints = [
-  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.2},
-  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.2},
-  {x: window.innerWidth * 0.8, y: window.innerHeight * 0.8},
-  {x: window.innerWidth * 0.2, y: window.innerHeight * 0.8},
-  {x: window.innerWidth * 0.5, y: window.innerHeight * 0.5}
-];
-
-// --------------------
-// WEBGAZER
-// --------------------
-window.onload = async () => {
-
-  if (!window.webgazer) return;
-
-  webgazer.setTracker('TFFacemesh');
-  webgazer.setRegression('ridge');
-
-  await webgazer.begin();
-
-  webgazer.setGazeListener((data) => {
-    if (data) {
-      gazeX = data.x;
-      gazeY = data.y;
-    }
-  });
-
-  webgazer.showVideoPreview(true);
-};
-
-// --------------------
-// CANVAS כיול
-// --------------------
-const canvas = document.getElementById("calCanvas");
-const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-// ציור נקודה
-function drawCalibration() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  let p = calPoints[calIndex];
-
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 40, 0, Math.PI * 2);
-  ctx.strokeStyle = "red";
-  ctx.lineWidth = 3;
-  ctx.stroke();
+function preload() {
+  // טעינת המודל של גוגל דרך ml5
+  faceMesh = ml5.faceMesh({ maxFaces: 1, refineLandmarks: true });
+  myVideo = createVideo(['CCCC.mp4']);
 }
 
-// לופ כיול
-function calibrationLoop() {
-  if (!calibrated) {
-    drawCalibration();
-    requestAnimationFrame(calibrationLoop);
-  }
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  
+  // מצלמה לזיהוי פנים
+  video = createCapture(VIDEO);
+  video.size(640, 480);
+  video.hide();
+
+  // התחלת זיהוי
+  faceMesh.detectStart(video, gotFaces);
+
+  // הגדרות וידאו CCCC
+  myVideo.hide();
+  myVideo.loop();
+  myVideo.volume(0);
+
+  document.getElementById('status-msg').style.display = 'none';
+  
+  smoothX = width / 2;
+  smoothY = height / 2;
 }
-calibrationLoop();
 
-// --------------------
-// קליקים לכיול (🔥 מתוקן)
-// --------------------
-window.addEventListener('click', (e) => {
+function gotFaces(results) {
+  faces = results;
+}
 
-  if (!calibrated) {
+function draw() {
+  background(0);
 
-    let p = calPoints[calIndex];
-    let d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+  // 1. ציור הוידאו CCCC על כל המסך
+  image(myVideo, 0, 0, width, height);
 
-    // 🔥 רדיוס גדול יותר
-    if (d < 150) {
+  // 2. עיבוד המבט
+  if (faces.length > 0) {
+    let face = faces[0];
+    
+    // נקודות האישונים (Keypoints של MediaPipe)
+    // 468 הוא אישון שמאל, 473 הוא אישון ימין
+    let leftPupil = face.keypoints[468];
+    let rightPupil = face.keypoints[473];
 
-      webgazer.recordScreenPosition(p.x, p.y, 'click');
-      calIndex++;
+    if (leftPupil && rightPupil) {
+      // חישוב ממוצע בין שתי העיניים
+      let avgX = (leftPupil.x + rightPupil.x) / 2;
+      let avgY = (leftPupil.y + rightPupil.y) / 2;
 
-      if (calIndex >= calPoints.length) {
-
-        calibrated = true;
-
-        document.getElementById("calibration").style.display = "none";
-
-        // נותן רגע לדפדפן
-        setTimeout(() => {
-          startP5();
-        }, 200);
-      }
+      // המרה לקואורדינטות מסך (עם פקטור רגישות)
+      // מכיוון שתנועת האישון קטנה, אנחנו מכפילים אותה כדי שתכסה את המסך
+      let sensitivity = 15; 
+      gazeX = map(avgX, video.width * 0.4, video.width * 0.6, 0, width);
+      gazeY = map(avgY, video.height * 0.4, video.height * 0.6, 0, height);
     }
   }
-});
 
-// --------------------
-// P5 SYSTEM
-// --------------------
-function startP5() {
+  // 3. החלקת תנועה (Smoothing)
+  smoothX += (gazeX - smoothX) * 0.1;
+  smoothY += (gazeY - smoothY) * 0.1;
 
-new p5((p) => {
+  // 4. ניתוח ויזואלי (הלוגיקה שלך)
+  analyzeFrame(edgeTexts);
+  detectFocus(smoothX, smoothY, edgeTexts, focusAreas, (f) => currentFocus = f);
+  drawLabels(focusAreas, currentFocus);
 
-  let video;
-  let edgeTexts = [];
-
-  let focusAreas = [];
-  let currentFocus = null;
-
-  p.preload = () => {
-    video = p.createVideo('CCCC.mp4'); // ודאי שהקובץ קיים
-  };
-
-  p.setup = () => {
-    p.createCanvas(window.innerWidth, window.innerHeight);
-    video.hide();
-    video.loop();
-  };
-
-  p.draw = () => {
-    p.background(0);
-
-    // וידאו
-    p.image(video, 0, 0, p.width, p.height);
-
-    analyzeFrame(p, edgeTexts);
-
-    // smoothing gaze
-    smoothX += (gazeX - smoothX) * 0.15;
-    smoothY += (gazeY - smoothY) * 0.15;
-
-    let gx = p.map(smoothX, 0, window.innerWidth, 0, p.width);
-    let gy = p.map(smoothY, 0, window.innerHeight, 0, p.height);
-
-    detectFocus(gx, gy, edgeTexts, focusAreas, (f)=> currentFocus = f);
-    drawLabels(p, focusAreas, currentFocus);
-  };
-
-});
+  // אופציונלי: ציור סמן מבט לדיבג
+  fill(255, 0, 0, 150);
+  noStroke();
+  circle(smoothX, smoothY, 15);
 }
 
-// --------------------
-// FOCUS
-// --------------------
 function detectFocus(gx, gy, edges, focusAreas, setCurrent) {
-  let radius = 80;
-
+  let radius = 100;
   for (let edge of edges) {
     let d = dist(gx, gy, edge.x, edge.y);
-
     if (d < radius) {
       setCurrent(edge);
-
       if (!focusAreas.includes(edge)) {
         focusAreas.push(edge);
       }
@@ -169,42 +99,37 @@ function detectFocus(gx, gy, edges, focusAreas, setCurrent) {
   }
 }
 
-// --------------------
-// DRAW LABELS
-// --------------------
-function drawLabels(p, focusAreas, currentFocus) {
-
+function drawLabels(focusAreas, currentFocus) {
   for (let edge of focusAreas) {
-
     let isCurrent = edge === currentFocus;
-
     if (isCurrent) {
-      p.fill(255, 0, 0);
-      p.drawingContext.filter = "none";
+      fill(224, 58, 46); // הצבע האדום שלך
+      drawingContext.filter = "none";
     } else {
-      p.fill(255, 0, 0, 120);
-      p.drawingContext.filter = "blur(4px)";
+      fill(224, 58, 46, 80);
+      drawingContext.filter = "blur(4px)";
     }
-
-    p.textSize(14);
-    p.text(edge.text, edge.x, edge.y);
+    textSize(14);
+    textFont('Courier New');
+    text(edge.text, edge.x, edge.y);
   }
-
-  p.drawingContext.filter = "none";
+  drawingContext.filter = "none";
 }
 
-// --------------------
-// ANALYSIS (דמו)
-// --------------------
-function analyzeFrame(p, edgeTexts) {
-
-  edgeTexts.length = 0;
-
-  for (let i = 0; i < 30; i++) {
-    edgeTexts.push({
-      x: p.random(p.width),
-      y: p.random(p.height),
-      text: "DATA"
-    });
+function analyzeFrame(edges) {
+  // יצירת נקודות נתונים אקראיות (כפי שהיה בקוד שלך)
+  if (frameCount % 60 === 0 || edges.length === 0) {
+    edges.length = 0;
+    for (let i = 0; i < 20; i++) {
+      edges.push({
+        x: random(width),
+        y: random(height),
+        text: "SCANNING_DATA_" + floor(random(1000, 9999))
+      });
+    }
   }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
 }
