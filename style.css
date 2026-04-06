@@ -1,17 +1,1 @@
-body {
-  margin: 0;
-  padding: 0;
-  background: black;
-  overflow: hidden;
-}
 
-#status-msg {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: #E03A2E;
-  font-family: 'Courier New', monospace;
-  font-size: 20px;
-  letter-spacing: 2px;
-}
