@@ -28,14 +28,34 @@
   #cal-area { position:relative; width:360px; height:240px; border:.5px solid #eee; }
 
   .dot {
-    position:absolute; width:18px; height:18px; border-radius:50%;
+    position:absolute; width:22px; height:22px; border-radius:50%;
     background:#eee; border:1px solid #ddd;
-    transform:translate(-50%,-50%); cursor:pointer; transition:all .15s;
+    transform:translate(-50%,-50%); transition:all .15s;
   }
-  .dot.active { background:#e03a2e; border-color:#e03a2e;
-    animation:pulse .7s ease-in-out infinite; }
-  .dot.done { background:#e03a2e; border-color:#e03a2e;
-    transform:translate(-50%,-50%) scale(.55); cursor:default; }
+  .dot.active {
+    background:#e03a2e; border-color:#e03a2e;
+    animation:pulse .7s ease-in-out infinite;
+  }
+  .dot.done {
+    background:#e03a2e; border-color:#e03a2e;
+    transform:translate(-50%,-50%) scale(.55);
+  }
+
+  /* טיימר עיגולי סביב הנקודה הפעילה */
+  .dot.active::after {
+    content:'';
+    position:absolute;
+    inset:-6px;
+    border-radius:50%;
+    border:2px solid transparent;
+    border-top-color:#e03a2e;
+    animation:spin var(--dur, 2s) linear forwards;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
   @keyframes pulse {
     0%,100%{ transform:translate(-50%,-50%) scale(1); }
     50%    { transform:translate(-50%,-50%) scale(1.3); }
@@ -43,15 +63,14 @@
 
   #cal-msg { font-size:9px; color:#bbb; letter-spacing:.1em; text-align:center; min-height:18px; }
 
-  #go-btn {
-    font-family:'Courier New',monospace; font-size:9px;
-    letter-spacing:.2em; text-transform:uppercase;
-    border:.5px solid #ddd; background:none;
-    padding:10px 28px; cursor:pointer; color:#ccc;
-    opacity:.25; pointer-events:none; transition:all .2s;
+  /* פס התקדמות */
+  #progress-bar {
+    width: 360px; height: 2px; background: #eee; display:none;
   }
-  #go-btn.on { opacity:1; pointer-events:all; color:#e03a2e; border-color:#e03a2e; }
-  #go-btn.on:hover { background:#e03a2e; color:#fff; }
+  #progress-fill {
+    height: 100%; width: 0%; background: #e03a2e;
+    transition: width 0.1s linear;
+  }
 
   #hud {
     position:fixed; bottom:16px; left:16px; z-index:10;
@@ -70,10 +89,10 @@
 
 <div id="cal">
   <h1>Eye Scan — Iris Calibration</h1>
-  <p>הסתכלי על כל <b>נקודה אדומה</b> לפי הסדר ולחצי עליה.</p>
+  <p>הסתכלי על כל <b>נקודה אדומה</b> ופשוט חכי — היא תירשם לבד אחרי 2 שניות.</p>
   <div id="cal-area"></div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
   <div id="cal-msg">ממתינה לטעינת המצלמה...</div>
-  <button id="go-btn">START SCAN →</button>
 </div>
 
 <div id="hud">
@@ -89,14 +108,16 @@
 <script>
 
 const COLS=5, ROWS=7, GAZE_R=110, FADE=0.09, BLUR_MAX=5.5;
+const DWELL_TIME = 2000; // מילישניות להמתנה על כל נקודה
 
 let gazeX=-1, gazeY=-1, irisRawX=0, irisRawY=0, irisOK=false, calModel=null;
 
-// ── CALIBRATION ──
+// ── כיול ──
 const CAL_PTS=[
   {sx:.15,sy:.15},{sx:.85,sy:.15},{sx:.50,sy:.50},{sx:.15,sy:.85},{sx:.85,sy:.85}
 ];
 let calSamples=[], calStep=-1, calDots=[];
+let dwellTimer=null, dwellStart=null, collectingDwell=false;
 
 const calArea=document.getElementById('cal-area');
 CAL_PTS.forEach((pt,i)=>{
@@ -104,7 +125,6 @@ CAL_PTS.forEach((pt,i)=>{
   d.className='dot';
   d.style.left=(pt.sx*100)+'%';
   d.style.top=(pt.sy*100)+'%';
-  d.addEventListener('click',()=>onDotClick(i));
   calArea.appendChild(d);
   calDots.push(d);
 });
@@ -117,25 +137,64 @@ function activateDot(i){
   });
   if(i<calDots.length){
     calDots[i].classList.add('active');
-    document.getElementById('cal-msg').textContent=`נקודה ${i+1}/5 — הסתכלי ולחצי`;
+    document.getElementById('cal-msg').textContent=`נקודה ${i+1}/5 — הסתכלי וחכי 2 שניות...`;
+    document.getElementById('progress-bar').style.display='block';
+    startDwell(i);
   }
 }
 
-function onDotClick(i){
-  if(i!==calStep) return;
-  if(!irisOK){
-    document.getElementById('cal-msg').textContent='פנים לא מזוהות — נסי שוב';
-    return;
-  }
-  calSamples.push({
-    ix:irisRawX, iy:irisRawY,
-    sx:CAL_PTS[i].sx*window.innerWidth,
-    sy:CAL_PTS[i].sy*window.innerHeight
-  });
-  calDots[i].classList.remove('active');
-  calDots[i].classList.add('done');
-  if(i+1<CAL_PTS.length){ activateDot(i+1); }
-  else { buildModel(); }
+function startDwell(i){
+  // אוסף דגימות מרובות לאורך זמן ההמתנה לדיוק גבוה יותר
+  collectingDwell=true;
+  let samples=[];
+  dwellStart=Date.now();
+
+  const progressFill=document.getElementById('progress-fill');
+  progressFill.style.width='0%';
+
+  const tick=setInterval(()=>{
+    const elapsed=Date.now()-dwellStart;
+    const pct=Math.min(100,(elapsed/DWELL_TIME)*100);
+    progressFill.style.width=pct+'%';
+
+    // אוסף דגימה רק אם פנים מזוהות
+    if(irisOK){
+      samples.push({ix:irisRawX, iy:irisRawY});
+    }
+
+    if(elapsed>=DWELL_TIME){
+      clearInterval(tick);
+      collectingDwell=false;
+
+      if(samples.length<5){
+        // לא היו מספיק דגימות — נסי שוב
+        document.getElementById('cal-msg').textContent='פנים לא מזוהות — נסי שוב, הסתכלי למצלמה';
+        progressFill.style.width='0%';
+        setTimeout(()=>startDwell(i), 800);
+        return;
+      }
+
+      // ממוצע הדגימות = דיוק גבוה יותר
+      const avgIx = samples.reduce((s,d)=>s+d.ix,0)/samples.length;
+      const avgIy = samples.reduce((s,d)=>s+d.iy,0)/samples.length;
+
+      calSamples.push({
+        ix: avgIx,
+        iy: avgIy,
+        sx: CAL_PTS[i].sx*window.innerWidth,
+        sy: CAL_PTS[i].sy*window.innerHeight
+      });
+
+      calDots[i].classList.remove('active');
+      calDots[i].classList.add('done');
+
+      if(i+1<CAL_PTS.length){
+        setTimeout(()=>activateDot(i+1), 400);
+      } else {
+        buildModel();
+      }
+    }
+  }, 50);
 }
 
 function buildModel(){
@@ -150,11 +209,13 @@ function buildModel(){
   const ay=(n*siysy-siy*ssy)/(n*siy2-siy*siy||1);
   const by=(ssy-ay*siy)/n;
   calModel={ax,bx,ay,by};
-  document.getElementById('cal-msg').textContent='כיול הושלם ✓';
-  document.getElementById('go-btn').classList.add('on');
-}
 
-document.getElementById('go-btn').addEventListener('click',startExp);
+  document.getElementById('progress-bar').style.display='none';
+  document.getElementById('cal-msg').textContent='כיול הושלם ✓ מתחיל...';
+
+  // מתחיל את החוויה אוטומטית אחרי שנייה
+  setTimeout(startExp, 1000);
+}
 
 // ── MEDIAPIPE ──
 const I={ri:468,li:473,ro:33,rin:133,lin:362,lo:263,rt:159,rb:145,lt:386,lb:374};
@@ -181,7 +242,7 @@ async function initFaceMesh(){
   cam.start();
 
   document.getElementById('h1').textContent='IRIS TRACKING ACTIVE';
-  document.getElementById('cal-msg').textContent='נקודה 1/5 — הסתכלי ולחצי';
+  document.getElementById('cal-msg').textContent='נקודה 1/5 — הסתכלי וחכי 2 שניות...';
   activateDot(0);
 }
 
