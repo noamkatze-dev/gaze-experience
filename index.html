@@ -162,7 +162,8 @@ function processEye(res) {
   const lEH=Math.abs(lm[145].y-lm[159].y)||.001;
   const rEH=Math.abs(lm[374].y-lm[386].y)||.001;
 
-  irisRawX=-((lIx-(lm[33].x+lm[133].x)/2)/lEW+(rIx-(lm[362].x+lm[263].x)/2)/rEW)/2;
+  // ✅ תיקון: הסרנו את המינוס הראשוני כדי לתקן את כיוון המראה
+  irisRawX=+((lIx-(lm[33].x+lm[133].x)/2)/lEW+(rIx-(lm[362].x+lm[263].x)/2)/rEW)/2;
   irisRawY= ((lIy-(lm[159].y+lm[145].y)/2)/lEH+(rIy-(lm[386].y+lm[374].y)/2)/rEH)/2;
 
   // ממפים תנועת עין יחסית למסך
@@ -257,8 +258,6 @@ function analyzeEdges() {
 }
 
 // ── לולאת ציור ──
-// הסרטון נראה בלי מגע — רק הטקסטים מצויירים על הקנבס
-// ומוסתרים חוץ מהמעגל סביב נקודת המבט
 let frameCount=0;
 function drawLoop() {
   requestAnimationFrame(drawLoop);
