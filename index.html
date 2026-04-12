@@ -7,46 +7,32 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
 
-  /* שכבת הסרטון — תמיד נראית */
   #vid {
     position:fixed; inset:0; width:100%; height:100%;
     object-fit:cover; z-index:0;
   }
 
-  /* קנבס הטקסטים — מעל הסרטון */
   #labelCanvas {
     position:fixed; inset:0; z-index:1; pointer-events:none;
   }
 
-  /* וידאו מצלמה נסתר */
   #cam {
     position:fixed; opacity:0; pointer-events:none;
-    width:1px; height:1px; top:0; left:0;
+    width:1px; height:1px;
   }
 
-  /* מסך פתיחה */
   #intro {
     position:fixed; inset:0; background:#000;
     z-index:999; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:20px;
     transition: opacity 0.8s ease;
   }
-  #intro-title {
-    font-size:9px; letter-spacing:.4em; color:#333;
-    text-transform:uppercase;
-  }
-  #intro-msg {
-    font-size:8px; color:#222; letter-spacing:.15em;
-    text-align:center; line-height:2.4; text-transform:uppercase;
-  }
+
   #intro-msg.ok { color:#e03a2e; }
 
-  /* HUD */
   #hud {
     position:fixed; bottom:14px; left:14px; z-index:10;
     font-size:7px; color:rgba(224,58,46,.25);
-    letter-spacing:.15em; line-height:2.4;
-    pointer-events:none; text-transform:uppercase;
   }
 </style>
 </head>
@@ -57,11 +43,10 @@
 </video>
 
 <video id="cam" autoplay playsinline muted></video>
-
 <canvas id="labelCanvas"></canvas>
 
 <div id="intro">
-  <div id="intro-title">Eye Scan — Vision System</div>
+  <div>Eye Scan — Vision System</div>
   <div id="intro-msg">טוענת מודל...</div>
 </div>
 
@@ -75,81 +60,60 @@
 import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
 const { FaceLandmarker, FilesetResolver } = vision;
 
-// ── קבועים ──
-const REVEAL_R  = 140;   // רדיוס גילוי טקסטים (פיקסלים)
-const SMOOTH    = 0.08;  // חלקות תנועה
-const EDGE_STEP = 5;
-const EDGE_THR  = 180;
-const LABEL_EVERY = 55; // כל כמה קצוות חזקים להציג תווית
+const REVEAL_R=140, SMOOTH=0.08, EDGE_STEP=5, EDGE_THR=180, LABEL_EVERY=55;
 
-// ── מצב ──
-let irisOK  = false;
-let irisRawX = 0, irisRawY = 0;
-let smoothX  = -1, smoothY = -1;
-let faceLandmarker = null;
-let edgeLabels = []; // { x, y, txt } — כל הטקסטים שחושבו
+let irisOK=false, irisRawX=0, irisRawY=0;
+let smoothX=-1, smoothY=-1;
+let faceLandmarker=null;
+let edgeLabels=[];
 
-// ── אלמנטים ──
-const vidEl    = document.getElementById('vid');
-const camEl    = document.getElementById('cam');
-const introEl  = document.getElementById('intro');
-const msgEl    = document.querySelector('#intro-msg');
-const canvas   = document.getElementById('labelCanvas');
-const ctx      = canvas.getContext('2d');
+const vidEl=document.getElementById('vid');
+const camEl=document.getElementById('cam');
+const canvas=document.getElementById('labelCanvas');
+const ctx=canvas.getContext('2d');
 
-function setMsg(txt, ok=false) {
-  msgEl.textContent = txt;
-  msgEl.className   = ok ? 'ok' : '';
-}
+canvas.width=innerWidth;
+canvas.height=innerHeight;
+window.addEventListener('resize',()=>{
+  canvas.width=innerWidth;
+  canvas.height=innerHeight;
+});
 
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resize();
-window.addEventListener('resize', resize);
-
-// ── טעינת מודל ──
-async function loadModel() {
-  const fs = await FilesetResolver.forVisionTasks(
+async function loadModel(){
+  const fs=await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
   );
-  faceLandmarker = await FaceLandmarker.createFromOptions(fs, {
-    baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      delegate: "GPU"
+  faceLandmarker=await FaceLandmarker.createFromOptions(fs,{
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate:"GPU"
     },
-    runningMode: "VIDEO",
-    numFaces: 1,
-    outputFaceBlendshapes: false,
+    runningMode:"VIDEO",
+    numFaces:1
   });
 }
 
-// ── מצלמה ──
-async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width:640, height:480, facingMode:'user' }
-  });
-  camEl.srcObject = stream;
-  await new Promise(r => camEl.addEventListener('loadeddata', r, { once:true }));
+async function startCamera(){
+  const stream=await navigator.mediaDevices.getUserMedia({video:true});
+  camEl.srcObject=stream;
+  await new Promise(r=>camEl.onloadeddata=r);
 }
 
-// ── לולאת זיהוי עיניים ──
-let lastCamTime = -1;
-function detectLoop() {
-  if (faceLandmarker && lastCamTime !== camEl.currentTime) {
-    lastCamTime = camEl.currentTime;
-    const res = faceLandmarker.detectForVideo(camEl, performance.now());
+let lastCamTime=-1;
+function detectLoop(){
+  if(faceLandmarker && lastCamTime!==camEl.currentTime){
+    lastCamTime=camEl.currentTime;
+    const res=faceLandmarker.detectForVideo(camEl,performance.now());
     processEye(res);
   }
   requestAnimationFrame(detectLoop);
 }
 
-function processEye(res) {
-  if (!res.faceLandmarks?.length) { irisOK=false; return; }
-  const lm = res.faceLandmarks[0];
-  if (lm.length < 478) { irisOK=false; return; }
-  irisOK = true;
+function processEye(res){
+  if(!res.faceLandmarks?.length){irisOK=false;return;}
+  const lm=res.faceLandmarks[0];
+  if(lm.length<478){irisOK=false;return;}
+  irisOK=true;
 
   const LI=[468,469,470,471,472], RI=[473,474,475,476,477];
   const lIx=LI.reduce((s,i)=>s+lm[i].x,0)/5;
@@ -163,184 +127,123 @@ function processEye(res) {
   const rEH=Math.abs(lm[374].y-lm[386].y)||.001;
 
   irisRawX=-((lIx-(lm[33].x+lm[133].x)/2)/lEW+(rIx-(lm[362].x+lm[263].x)/2)/rEW)/2;
-  irisRawY= ((lIy-(lm[159].y+lm[145].y)/2)/lEH+(rIy-(lm[386].y+lm[374].y)/2)/rEH)/2;
+  irisRawY=((lIy-(lm[159].y+lm[145].y)/2)/lEH+(rIy-(lm[386].y+lm[374].y)/2)/rEH)/2;
 
-  // ממפים תנועת עין יחסית למסך
-  const targetX = canvas.width  * (0.5 - irisRawX * 1.6);
-  const targetY = canvas.height * (0.5 + irisRawY * 2.2);
+  const tx=canvas.width*(0.5-irisRawX*1.6);
+  const ty=canvas.height*(0.5+irisRawY*2.2);
 
-  if (smoothX < 0) { smoothX=targetX; smoothY=targetY; }
-  smoothX += (targetX - smoothX) * SMOOTH;
-  smoothY += (targetY - smoothY) * SMOOTH;
-
-  document.getElementById('h1').textContent = 'IRIS ●';
-  document.getElementById('h2').textContent = `IRIS  ${irisRawX.toFixed(3)}  ${irisRawY.toFixed(3)}`;
+  if(smoothX<0){smoothX=tx;smoothY=ty;}
+  smoothX+=(tx-smoothX)*SMOOTH;
+  smoothY+=(ty-smoothY)*SMOOTH;
 }
 
-// ── ניתוח קצוות + בניית רשימת טקסטים ──
-const offCanvas = document.createElement('canvas');
-const offCtx    = offCanvas.getContext('2d');
+const offCanvas=document.createElement('canvas');
+const offCtx=offCanvas.getContext('2d');
 
-function analyzeEdges() {
-  if (vidEl.readyState < 2) return;
+function analyzeEdges(){
   const vw=vidEl.videoWidth, vh=vidEl.videoHeight;
-  if (!vw||!vh) return;
+  if(!vw) return;
 
   offCanvas.width=vw; offCanvas.height=vh;
-  offCtx.drawImage(vidEl,0,0,vw,vh);
-  const pixels = offCtx.getImageData(0,0,vw,vh).data;
+  offCtx.drawImage(vidEl,0,0);
+  const pixels=offCtx.getImageData(0,0,vw,vh).data;
 
-  function br(x,y) {
-    if (x<0||x>=vw||y<0||y>=vh) return 0;
-    const i=(Math.floor(y)*vw+Math.floor(x))*4;
+  function br(x,y){
+    const i=(y*vw+x)*4;
     return (pixels[i]+pixels[i+1]+pixels[i+2])/3;
   }
 
-  // בהירות ממוצעת לתוויות
-  let tb=0, sb=0;
-  for(let y=0;y<vh;y+=20) for(let x=0;x<vw;x+=20){tb+=br(x,y);sb++;}
-  const avgB = sb?Math.floor(tb/sb):128;
-  const cLbl = avgB>150?'HIGH':avgB>90?'MED':'LOW';
-
-  // ניתוח תנועה פשוט (שמירת פריים קודם)
-  let motionLbl = 'STATIC';
-  if (analyzeEdges._prevPixels) {
-    let diff=0, n=0;
-    for(let i=0;i<pixels.length;i+=40){diff+=Math.abs(pixels[i]-analyzeEdges._prevPixels[i]);n++;}
-    const avg=diff/n;
-    motionLbl = avg>20?'FAST':avg>5?'SLOW':'STATIC';
-  }
-  analyzeEdges._prevPixels = new Uint8ClampedArray(pixels);
-
   const labels=[];
-  let edgeCount=0, sampleN=0;
-  const W=canvas.width, H=canvas.height;
+  let count=0,n=0;
 
   for(let y=EDGE_STEP;y<vh-EDGE_STEP;y+=EDGE_STEP){
     for(let x=EDGE_STEP;x<vw-EDGE_STEP;x+=EDGE_STEP){
-      const gx =
-        -br(x-EDGE_STEP,y-EDGE_STEP)+br(x+EDGE_STEP,y-EDGE_STEP)
-        -2*br(x-EDGE_STEP,y)+2*br(x+EDGE_STEP,y)
-        -br(x-EDGE_STEP,y+EDGE_STEP)+br(x+EDGE_STEP,y+EDGE_STEP);
-      const gy =
-        -br(x-EDGE_STEP,y-EDGE_STEP)-2*br(x,y-EDGE_STEP)-br(x+EDGE_STEP,y-EDGE_STEP)
-        +br(x-EDGE_STEP,y+EDGE_STEP)+2*br(x,y+EDGE_STEP)+br(x+EDGE_STEP,y+EDGE_STEP);
+      const gx=br(x+1,y)-br(x-1,y);
+      const gy=br(x,y+1)-br(x,y-1);
       const mag=Math.sqrt(gx*gx+gy*gy);
 
       if(mag>EDGE_THR){
-        edgeCount++;
+        if(n%LABEL_EVERY===0){
+          const sx=x/vw*canvas.width;
+          const sy=y/vh*canvas.height;
 
-        if(sampleN % LABEL_EVERY === 0){
-          const angDeg = Math.atan2(gy,gx)*180/Math.PI;
-          let lbl;
-          if(angDeg>45&&angDeg<135)                              lbl=`VERTICAL / CONTRAST_${cLbl}`;
-          else if(Math.abs(angDeg)<20||Math.abs(angDeg)>160)    lbl=`HORIZONTAL / STAB_${Math.floor(Math.random()*15+85)}%`;
-          else if(mag>210)                                        lbl=`CRITICAL / MOTION_${motionLbl}`;
-          else                                                    lbl=`DETAIL / BRIGHT_${avgB}`;
-
-          // מיפוי מקורדינטות וידאו → מסך (cover)
-          const canvasRatio=W/H, videoRatio=vw/vh;
-          let dw,dh,ox,oy;
-          if(videoRatio>canvasRatio){dh=H;dw=videoRatio*dh;ox=(W-dw)/2;oy=0;}
-          else{dw=W;dh=dw/videoRatio;ox=0;oy=(H-dh)/2;}
-          const sx = ox + (x/vw)*dw;
-          const sy = oy + (y/vh)*dh;
-          labels.push({x:sx, y:sy, txt:lbl.toUpperCase()});
+          labels.push({
+            x:sx,y:sy,
+            txt:"DATA",
+            state:'hidden',
+            lastSeen:0
+          });
         }
-        sampleN++;
+        n++; count++;
       }
     }
   }
 
-  edgeLabels = labels;
-  document.getElementById('h3').textContent = `EDGES  ${edgeCount}`;
+  edgeLabels=labels;
 }
 
-// ── לולאת ציור ──
-// הסרטון נראה בלי מגע — רק הטקסטים מצויירים על הקנבס
-// ומוסתרים חוץ מהמעגל סביב נקודת המבט
-let frameCount=0;
-function drawLoop() {
+let frame=0;
+
+function drawLoop(){
   requestAnimationFrame(drawLoop);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!irisOK) return;
 
-  const W=canvas.width, H=canvas.height;
-  ctx.clearRect(0,0,W,H);
+  const now=performance.now();
 
-  // אין עין מזוהה — לא מציירים כלום (הסרטון נראה רגיל)
-  if (smoothX<0 || !irisOK) return;
-
-  // ── ציור טקסטים רק בתוך מעגל המבט ──
-  ctx.save();
-
-  // חיתוך לפי מעגל
-  ctx.beginPath();
-  ctx.arc(smoothX, smoothY, REVEAL_R, 0, Math.PI*2);
-  ctx.clip();
-
-  // טקסטים
-  ctx.font = '6px Courier New';
-  ctx.textAlign = 'center';
+  // עדכון מצבים
   for(const lb of edgeLabels){
-    // שקיפות לפי מרחק ממרכז המעגל
-    const dist = Math.hypot(lb.x - smoothX, lb.y - smoothY);
-    const alpha = Math.max(0, 1 - dist/REVEAL_R);
-    ctx.fillStyle = `rgba(224,58,46,${alpha * 0.85})`;
-    ctx.fillText(lb.txt, lb.x, lb.y);
+    const d=Math.hypot(lb.x-smoothX,lb.y-smoothY);
+
+    if(d<REVEAL_R){
+      lb.state='active';
+      lb.lastSeen=now;
+    }else if(lb.state==='active'){
+      lb.state='visited';
+    }
   }
 
-  ctx.restore();
+  ctx.font='6px Courier New';
+  ctx.textAlign='center';
 
-  // מסגרת עדינה של המעגל
-  ctx.save();
+  for(const lb of edgeLabels){
+
+    if(lb.state==='hidden') continue;
+
+    const d=Math.hypot(lb.x-smoothX,lb.y-smoothY);
+
+    if(lb.state==='active' && d<REVEAL_R){
+      ctx.fillStyle='rgba(255,0,0,1)';
+      ctx.shadowColor='red';
+      ctx.shadowBlur=10;
+      ctx.filter='none';
+    }else{
+      ctx.fillStyle='rgba(224,58,46,0.3)';
+      ctx.shadowBlur=0;
+      ctx.filter='blur(2px)';
+    }
+
+    ctx.fillText(lb.txt,lb.x,lb.y);
+  }
+
+  ctx.filter='none';
+
+  // סמן מבט
   ctx.beginPath();
-  ctx.arc(smoothX, smoothY, REVEAL_R, 0, Math.PI*2);
-  ctx.strokeStyle = 'rgba(224,58,46,0.12)';
-  ctx.lineWidth   = 0.5;
+  ctx.arc(smoothX,smoothY,REVEAL_R,0,Math.PI*2);
+  ctx.strokeStyle='rgba(255,0,0,0.2)';
   ctx.stroke();
 
-  // נקודה + צלב מרכזי
-  ctx.fillStyle   = 'rgba(224,58,46,0.5)';
-  ctx.beginPath();
-  ctx.arc(smoothX, smoothY, 3, 0, Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(224,58,46,0.35)';
-  ctx.lineWidth   = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(smoothX-12,smoothY); ctx.lineTo(smoothX+12,smoothY);
-  ctx.moveTo(smoothX,smoothY-12); ctx.lineTo(smoothX,smoothY+12);
-  ctx.stroke();
-  ctx.restore();
-
-  // ניתוח קצוות כל 12 פריימים
-  frameCount++;
-  if(frameCount%12===0) analyzeEdges();
+  frame++;
+  if(frame%12===0) analyzeEdges();
 }
 
-// ── הפעלה ──
 (async()=>{
-  try{
-    setMsg('טוענת מודל...');
-    await loadModel();
-
-    setMsg('מפעילה מצלמה...');
-    await startCamera();
-
-    vidEl.play().catch(()=>{});
-
-    setMsg('הזיזי את העיניים — הנתונים יתגלו ✓', true);
-    setTimeout(()=>{
-      introEl.style.opacity='0';
-      setTimeout(()=>introEl.style.display='none', 800);
-    }, 1200);
-
-    detectLoop();
-    drawLoop();
-
-  }catch(e){
-    document.getElementById('h1').textContent='ERROR';
-    setMsg('שגיאה: '+e.message);
-    console.error(e);
-  }
+  await loadModel();
+  await startCamera();
+  vidEl.play();
+  detectLoop();
+  drawLoop();
 })();
 </script>
 </body>
