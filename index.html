@@ -51,6 +51,7 @@
   <source src="Roman_Statue_Rotation_Video.mp4" type="video/mp4">
 </video>
 
+<!-- וידאו מצלמה נסתר — לא מועבר ל-MediaPipe ישירות -->
 <video id="cam" autoplay playsinline muted></video>
 
 <canvas id="labelCanvas"></canvas>
@@ -76,10 +77,8 @@ const SMOOTH      = 0.08;
 const EDGE_STEP   = 5;
 const EDGE_THR    = 180;
 const LABEL_EVERY = 55;
-
-// רגישות אישונים
-const SENS_X = 8.0;
-const SENS_Y = 8.0;
+const SENS_X      = 8.0;
+const SENS_Y      = 8.0;
 
 // ── מצב ──
 let irisOK   = false;
@@ -95,6 +94,12 @@ const introEl = document.getElementById('intro');
 const msgEl   = document.querySelector('#intro-msg');
 const canvas  = document.getElementById('labelCanvas');
 const ctx     = canvas.getContext('2d');
+
+// ── קנבס ביניים — מצלמה הפוכה, זה מה שנשלח ל-MediaPipe ──
+const flipCanvas = document.createElement('canvas');
+flipCanvas.width  = 640;
+flipCanvas.height = 480;
+const flipCtx = flipCanvas.getContext('2d', { willReadFrequently: true });
 
 function setMsg(txt, ok=false) {
   msgEl.textContent = txt;
@@ -134,11 +139,20 @@ async function startCamera() {
 }
 
 // ── לולאת זיהוי עיניים ──
+// מצייר את המצלמה הפוכה על flipCanvas ושולח אותו ל-MediaPipe
 let lastCamTime = -1;
 function detectLoop() {
-  if (faceLandmarker && lastCamTime !== camEl.currentTime) {
+  if (faceLandmarker && camEl.readyState >= 2 && lastCamTime !== camEl.currentTime) {
     lastCamTime = camEl.currentTime;
-    const res = faceLandmarker.detectForVideo(camEl, performance.now());
+
+    // ✅ ציור הפוך — scaleX(-1) על הקנבס
+    flipCtx.save();
+    flipCtx.scale(-1, 1);
+    flipCtx.drawImage(camEl, -640, 0, 640, 480);
+    flipCtx.restore();
+
+    // שליחת התמונה ההפוכה ל-MediaPipe
+    const res = faceLandmarker.detectForVideo(flipCanvas, performance.now());
     processEye(res);
   }
   requestAnimationFrame(detectLoop);
@@ -150,26 +164,21 @@ function processEye(res) {
   if (lm.length < 478) { irisOK=false; return; }
   irisOK = true;
 
-  // ✅ הפיכת X ברמת הנקודות — מבטל מראה לגמרי מהמקור
-  const x = i => 1 - lm[i].x;
-  const y = i => lm[i].y;
-
+  // קואורדינטות ישירות — ללא flip, כי התמונה כבר הפוכה
   const LI=[468,469,470,471,472], RI=[473,474,475,476,477];
-  const lIx = LI.reduce((s,i) => s + x(i), 0) / 5;
-  const lIy = LI.reduce((s,i) => s + y(i), 0) / 5;
-  const rIx = RI.reduce((s,i) => s + x(i), 0) / 5;
-  const rIy = RI.reduce((s,i) => s + y(i), 0) / 5;
+  const lIx = LI.reduce((s,i) => s + lm[i].x, 0) / 5;
+  const lIy = LI.reduce((s,i) => s + lm[i].y, 0) / 5;
+  const rIx = RI.reduce((s,i) => s + lm[i].x, 0) / 5;
+  const rIy = RI.reduce((s,i) => s + lm[i].y, 0) / 5;
 
-  const lEW = Math.abs(x(133) - x(33))  || .001;
-  const rEW = Math.abs(x(263) - x(362)) || .001;
-  const lEH = Math.abs(y(145) - y(159)) || .001;
-  const rEH = Math.abs(y(374) - y(386)) || .001;
+  const lEW = Math.abs(lm[133].x - lm[33].x)  || .001;
+  const rEW = Math.abs(lm[263].x - lm[362].x) || .001;
+  const lEH = Math.abs(lm[145].y - lm[159].y) || .001;
+  const rEH = Math.abs(lm[374].y - lm[386].y) || .001;
 
-  // תנועת אישון יחסית למסגרת העין בלבד — ללא השפעת ראש
-  irisRawX = ((lIx - (x(33)+x(133))/2) / lEW + (rIx - (x(362)+x(263))/2) / rEW) / 2;
-  irisRawY = ((lIy - (y(159)+y(145))/2) / lEH + (rIy - (y(386)+y(374))/2) / rEH) / 2;
+  irisRawX = ((lIx - (lm[33].x+lm[133].x)/2) / lEW + (rIx - (lm[362].x+lm[263].x)/2) / rEW) / 2;
+  irisRawY = ((lIy - (lm[159].y+lm[145].y)/2) / lEH + (rIy - (lm[386].y+lm[374].y)/2) / rEH) / 2;
 
-  // מרכז קבוע + רק תנועת אישון
   const targetX = canvas.width  * 0.5 + irisRawX * canvas.width  * SENS_X;
   const targetY = canvas.height * 0.5 + irisRawY * canvas.height * SENS_Y;
 
@@ -183,7 +192,7 @@ function processEye(res) {
 
 // ── ניתוח קצוות ──
 const offCanvas = document.createElement('canvas');
-const offCtx    = offCanvas.getContext('2d');
+const offCtx    = offCanvas.getContext('2d', { willReadFrequently: true });
 
 function analyzeEdges() {
   if (vidEl.readyState < 2) return;
@@ -231,7 +240,6 @@ function analyzeEdges() {
 
       if(mag>EDGE_THR){
         edgeCount++;
-
         if(sampleN % LABEL_EVERY === 0){
           const angDeg = Math.atan2(gy,gx)*180/Math.PI;
           let lbl;
