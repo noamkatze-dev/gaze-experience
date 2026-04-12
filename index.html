@@ -157,13 +157,13 @@ function processEye(res) {
   const lEH=Math.abs(lm[145].y-lm[159].y)||.001;
   const rEH=Math.abs(lm[374].y-lm[386].y)||.001;
 
-  // ✅ תיקון כיוון X ו-Y + רגישות מוגברת
+  // ✅ כיוון X ו-Y מתוקנים
   irisRawX=-((lIx-(lm[33].x+lm[133].x)/2)/lEW+(rIx-(lm[362].x+lm[263].x)/2)/rEW)/2;
   irisRawY=-((lIy-(lm[159].y+lm[145].y)/2)/lEH+(rIy-(lm[386].y+lm[374].y)/2)/rEH)/2;
 
-  // ✅ מכפילים מוגדלים לרגישות גבוהה יותר
+  // ✅ רגישות מוגברת + כיוון Y של ראש מתוקן
   const targetX = canvas.width  * (0.5 - irisRawX * 3.5);
-  const targetY = canvas.height * (0.5 + irisRawY * 4.5);
+  const targetY = canvas.height * (0.5 - irisRawY * 4.5);
 
   if (smoothX < 0) { smoothX=targetX; smoothY=targetY; }
   smoothX += (targetX - smoothX) * SMOOTH;
