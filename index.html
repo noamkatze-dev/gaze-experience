@@ -77,7 +77,7 @@ const EDGE_STEP   = 5;
 const EDGE_THR    = 180;
 const LABEL_EVERY = 55;
 
-// רגישות אישונים — הגדל/הקטן לפי טעמך
+// רגישות אישונים
 const SENS_X = 8.0;
 const SENS_Y = 8.0;
 
@@ -150,22 +150,26 @@ function processEye(res) {
   if (lm.length < 478) { irisOK=false; return; }
   irisOK = true;
 
+  // ✅ הפיכת X ברמת הנקודות — מבטל מראה לגמרי מהמקור
+  const x = i => 1 - lm[i].x;
+  const y = i => lm[i].y;
+
   const LI=[468,469,470,471,472], RI=[473,474,475,476,477];
-  const lIx=LI.reduce((s,i)=>s+lm[i].x,0)/5;
-  const lIy=LI.reduce((s,i)=>s+lm[i].y,0)/5;
-  const rIx=RI.reduce((s,i)=>s+lm[i].x,0)/5;
-  const rIy=RI.reduce((s,i)=>s+lm[i].y,0)/5;
+  const lIx = LI.reduce((s,i) => s + x(i), 0) / 5;
+  const lIy = LI.reduce((s,i) => s + y(i), 0) / 5;
+  const rIx = RI.reduce((s,i) => s + x(i), 0) / 5;
+  const rIy = RI.reduce((s,i) => s + y(i), 0) / 5;
 
-  const lEW=Math.abs(lm[133].x-lm[33].x)||.001;
-  const rEW=Math.abs(lm[263].x-lm[362].x)||.001;
-  const lEH=Math.abs(lm[145].y-lm[159].y)||.001;
-  const rEH=Math.abs(lm[374].y-lm[386].y)||.001;
+  const lEW = Math.abs(x(133) - x(33))  || .001;
+  const rEW = Math.abs(x(263) - x(362)) || .001;
+  const lEH = Math.abs(y(145) - y(159)) || .001;
+  const rEH = Math.abs(y(374) - y(386)) || .001;
 
-  // תנועת אישון יחסית למסגרת העין בלבד (ללא השפעת ראש)
-  irisRawX = ((lIx-(lm[33].x+lm[133].x)/2)/lEW + (rIx-(lm[362].x+lm[263].x)/2)/rEW) / 2;
-  irisRawY = ((lIy-(lm[159].y+lm[145].y)/2)/lEH + (rIy-(lm[386].y+lm[374].y)/2)/rEH) / 2;
+  // תנועת אישון יחסית למסגרת העין בלבד — ללא השפעת ראש
+  irisRawX = ((lIx - (x(33)+x(133))/2) / lEW + (rIx - (x(362)+x(263))/2) / rEW) / 2;
+  irisRawY = ((lIy - (y(159)+y(145))/2) / lEH + (rIy - (y(386)+y(374))/2) / rEH) / 2;
 
-  // ✅ מרכז קבוע + רק תנועת אישון
+  // מרכז קבוע + רק תנועת אישון
   const targetX = canvas.width  * 0.5 + irisRawX * canvas.width  * SENS_X;
   const targetY = canvas.height * 0.5 + irisRawY * canvas.height * SENS_Y;
 
