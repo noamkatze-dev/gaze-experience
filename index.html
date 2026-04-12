@@ -77,8 +77,12 @@ const EDGE_STEP   = 5;
 const EDGE_THR    = 180;
 const LABEL_EVERY = 55;
 
+// רגישות אישונים — הגדל/הקטן לפי טעמך
+const SENS_X = 4.0;
+const SENS_Y = 4.0;
+
 // ── מצב ──
-let irisOK  = false;
+let irisOK   = false;
 let irisRawX = 0, irisRawY = 0;
 let smoothX  = -1, smoothY = -1;
 let faceLandmarker = null;
@@ -157,13 +161,13 @@ function processEye(res) {
   const lEH=Math.abs(lm[145].y-lm[159].y)||.001;
   const rEH=Math.abs(lm[374].y-lm[386].y)||.001;
 
-  // ✅ כיוון X ו-Y מתוקנים
-  irisRawX=-((lIx-(lm[33].x+lm[133].x)/2)/lEW+(rIx-(lm[362].x+lm[263].x)/2)/rEW)/2;
-  irisRawY=-((lIy-(lm[159].y+lm[145].y)/2)/lEH+(rIy-(lm[386].y+lm[374].y)/2)/rEH)/2;
+  // תנועת אישון יחסית למסגרת העין בלבד (ללא השפעת ראש)
+  irisRawX = ((lIx-(lm[33].x+lm[133].x)/2)/lEW + (rIx-(lm[362].x+lm[263].x)/2)/rEW) / 2;
+  irisRawY = ((lIy-(lm[159].y+lm[145].y)/2)/lEH + (rIy-(lm[386].y+lm[374].y)/2)/rEH) / 2;
 
-  // ✅ רגישות מוגברת + כיוון Y של ראש מתוקן
-  const targetX = canvas.width  * (0.5 - irisRawX * 3.5);
-  const targetY = canvas.height * (0.5 - irisRawY * 4.5);
+  // ✅ מרכז קבוע + רק תנועת אישון
+  const targetX = canvas.width  * 0.5 + irisRawX * canvas.width  * SENS_X;
+  const targetY = canvas.height * 0.5 + irisRawY * canvas.height * SENS_Y;
 
   if (smoothX < 0) { smoothX=targetX; smoothY=targetY; }
   smoothX += (targetX - smoothX) * SMOOTH;
