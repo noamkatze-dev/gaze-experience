@@ -53,7 +53,6 @@ body {
   transform: translate(-50%, -50%);
   pointer-events: none;
   opacity: 0;
-  /* filter and opacity are updated directly each frame — no CSS transition */
 }
 
 #gazeDot {
@@ -121,12 +120,13 @@ import { FaceLandmarker, FilesetResolver }
 /* ── constants ─────────────────────────────────────────────────────── */
 const W_ANA        = 160;
 const H_ANA        = 90;
-const N_ANN        = 40;          // annotation pool size
-const ANA_INTERVAL = 1150;        // ms between analysis passes
-const REVEAL_FRAC  = 0.09;        // gaze radius as fraction of min(W,H)
-const BLUR_SCALE   = 0.052;       // blur = dist / (min(W,H) * BLUR_SCALE)
-const MAX_BLUR     = 8;           // px cap
-const GAZE_LERP    = 0.13;        // exponential smooth factor
+const N_ANN        = 40;
+const ANA_INTERVAL = 1150;   // ms between analysis passes
+const REVEAL_FRAC  = 0.09;   // gaze reveal radius as fraction of min(W,H)
+const BLUR_SCALE   = 0.052;  // blur = dist / (min(W,H) * BLUR_SCALE)
+const MAX_BLUR     = 8;      // px cap
+const GAZE_LERP    = 0.13;   // exponential smooth factor
+const EYE_SCALE    = 3.5;    // amplify iris-in-eye offset → screen coords
 
 /* ── DOM ───────────────────────────────────────────────────────────── */
 const mainVideo    = document.getElementById('mainVideo');
@@ -141,13 +141,13 @@ const anaCtx = anaC.getContext('2d', { willReadFrequently: true });
 const preCtx = preC.getContext('2d', { willReadFrequently: true });
 
 /* ── state ─────────────────────────────────────────────────────────── */
-let pool     = [];
-let prevPx   = null;
-let rawGX    = 0.5;
-let rawGY    = 0.5;
-let sGX      = 0.5;
-let sGY      = 0.5;
-let gazeOn   = false;
+let pool      = [];
+let prevPx    = null;
+let rawGX     = 0.5;
+let rawGY     = 0.5;
+let sGX       = 0.5;
+let sGY       = 0.5;
+let gazeOn    = false;
 let lastAnaTs = -9999;
 
 /* ── annotation pool ────────────────────────────────────────────────── */
@@ -190,11 +190,11 @@ function sobel(px, w, h) {
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       const i  = y * w + x;
-      const tl = g[i - w - 1], tc = g[i - w], tr = g[i - w + 1];
-      const ml = g[i - 1],                     mr = g[i + 1];
-      const bl = g[i + w - 1], bc = g[i + w], br = g[i + w + 1];
-      gx[i] = (tr + 2 * mr + br) - (tl + 2 * ml + bl);
-      gy[i] = (bl + 2 * bc + br) - (tl + 2 * tc + tr);
+      const tl = g[i-w-1], tc = g[i-w], tr = g[i-w+1];
+      const ml = g[i-1],                mr = g[i+1];
+      const bl = g[i+w-1], bc = g[i+w], br = g[i+w+1];
+      gx[i] = (tr + 2*mr + br) - (tl + 2*ml + bl);
+      gy[i] = (bl + 2*bc + br) - (tl + 2*tc + tr);
       mg[i] = Math.hypot(gx[i], gy[i]);
     }
   }
@@ -210,7 +210,7 @@ function rStats(px, w, h, nx0, ny0, nx1, ny1) {
   let sL = 0, sL2 = 0, sS = 0, n = 0;
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      const o = (y * w + x) * 4;
+      const o  = (y * w + x) * 4;
       const r  = px[o]     / 255;
       const gr = px[o + 1] / 255;
       const b  = px[o + 2] / 255;
@@ -251,17 +251,17 @@ function rMotion(px, prev, w, h, nx0, ny0, nx1, ny1) {
 
 /* ── compose label from analysis results ─────────────────────────────── */
 function makeLabel(dir, mag, st, mv) {
-  if (mv > 38)             return `CRITICAL / MOTION_FAST`;
+  if (mv > 38)            return `CRITICAL / MOTION_FAST`;
   if (mv > 16) {
     const s = Math.min(99, Math.max(10, Math.round(99 - mv * 2.4)));
     return `${dir} / STAB_${s}%`;
   }
-  if (st.contrast > 52)    return `${dir} / CONTRAST_HIGH`;
-  if (st.bright   > 178)   return `DETAIL / BRIGHT_${st.bright}`;
-  if (st.bright   < 42)    return `DETAIL / DARK_${st.bright}`;
-  if (mag         > 210)   return `${dir} / SHARP_${Math.round(mag / 3)}`;
-  if (st.sat      > 42)    return `${dir} / SAT_${st.sat}%`;
-  if (st.contrast > 22)    return `${dir} / CONTRAST_${st.contrast}`;
+  if (st.contrast > 52)   return `${dir} / CONTRAST_HIGH`;
+  if (st.bright   > 178)  return `DETAIL / BRIGHT_${st.bright}`;
+  if (st.bright   < 42)   return `DETAIL / DARK_${st.bright}`;
+  if (mag         > 210)  return `${dir} / SHARP_${Math.round(mag / 3)}`;
+  if (st.sat      > 42)   return `${dir} / SAT_${st.sat}%`;
+  if (st.contrast > 22)   return `${dir} / CONTRAST_${st.contrast}`;
   return `STABLE / EDGE_${Math.round(mag)}`;
 }
 
@@ -299,23 +299,23 @@ function analyze() {
       const nx = bx / W_ANA;
       const ny = by / H_ANA;
       const m  = 0.07;
-      const st = rStats(px,    W_ANA, H_ANA, nx - m, ny - m, nx + m, ny + m);
-      const mv = rMotion(px, prevPx, W_ANA, H_ANA, nx - m, ny - m, nx + m, ny + m);
+      const st = rStats(px,    W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
+      const mv = rMotion(px, prevPx, W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
 
       const agx = Math.abs(gx[bi]), agy = Math.abs(gy[bi]);
       const a   = ((Math.atan2(gy[bi], gx[bi]) * 180 / Math.PI) % 180 + 180) % 180;
       let dir;
-      if (agx > 90 && agy > 90)     dir = 'CORNER';
-      else if (a < 25 || a >= 155)  dir = 'HORIZONTAL';
-      else if (a >= 65 && a < 115)  dir = 'VERTICAL';
-      else                          dir = 'DIAGONAL';
+      if (agx > 90 && agy > 90)    dir = 'CORNER';
+      else if (a < 25 || a >= 155) dir = 'HORIZONTAL';
+      else if (a >= 65 && a < 115) dir = 'VERTICAL';
+      else                         dir = 'DIAGONAL';
 
       const jx = nx + (Math.sin(nx * 137.5 + ny * 43.7) * 0.025);
       const jy = ny + (Math.cos(ny * 98.3  + nx * 61.1) * 0.025);
 
       pts.push({
-        nx: Math.max(0.01, Math.min(0.99, jx)),
-        ny: Math.max(0.01, Math.min(0.99, jy)),
+        nx:    Math.max(0.01, Math.min(0.99, jx)),
+        ny:    Math.max(0.01, Math.min(0.99, jy)),
         label: makeLabel(dir, best, st, mv)
       });
     }
@@ -358,22 +358,18 @@ function applyGaze() {
   gazeDot.style.left = (rect.left + gpx) + 'px';
   gazeDot.style.top  = (rect.top  + gpy) + 'px';
 
-  const revR  = Math.min(W, H) * REVEAL_FRAC;
-  const bsca  = Math.min(W, H) * BLUR_SCALE;
+  const revR = Math.min(W, H) * REVEAL_FRAC;
+  const bsca = Math.min(W, H) * BLUR_SCALE;
 
   for (const a of pool) {
     if (!a.el.textContent) continue;
-
     const ax = a.x * W;
     const ay = a.y * H;
     const d  = Math.hypot(ax - gpx, ay - gpy);
-
     if (d < revR) a.revealed = true;
-
     if (a.revealed) {
       a.el.style.opacity = '1';
-      const blur = Math.min(MAX_BLUR, d / bsca);
-      a.el.style.filter = `blur(${blur.toFixed(2)}px)`;
+      a.el.style.filter  = `blur(${Math.min(MAX_BLUR, d / bsca).toFixed(2)}px)`;
     }
   }
 }
@@ -410,9 +406,8 @@ async function startEyeTracking() {
     return false;
   }
 
-  let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }
     });
     webcamEl.srcObject = stream;
@@ -431,10 +426,35 @@ async function startEyeTracking() {
         if (res.faceLandmarks?.length > 0) {
           const lm = res.faceLandmarks[0];
           if (lm.length > 473) {
-            // 468 = left iris center, 473 = right iris center; mirror X
-            const li = lm[468], ri = lm[473];
-            rawGX = 1 - (li.x + ri.x) * 0.5;
-            rawGY =     (li.y + ri.y) * 0.5;
+            // Eye corner landmarks:
+            //   Left eye  — outer:33, inner:133, top:159, bottom:145, iris:468
+            //   Right eye — inner:362, outer:263, top:386, bottom:374, iris:473
+            const lOuter = lm[33],  lInner = lm[133];
+            const lTop   = lm[159], lBot   = lm[145];
+            const rInner = lm[362], rOuter = lm[263];
+            const rTop   = lm[386], rBot   = lm[374];
+            const lIris  = lm[468], rIris  = lm[473];
+
+            // Eye centers and sizes
+            const lCX = (lOuter.x + lInner.x) / 2;
+            const lCY = (lTop.y   + lBot.y)   / 2;
+            const lEW = Math.abs(lInner.x - lOuter.x) || 0.01;
+            const lEH = Math.abs(lBot.y   - lTop.y)   || 0.01;
+
+            const rCX = (rOuter.x + rInner.x) / 2;
+            const rCY = (rTop.y   + rBot.y)   / 2;
+            const rEW = Math.abs(rOuter.x - rInner.x) || 0.01;
+            const rEH = Math.abs(rBot.y   - rTop.y)   || 0.01;
+
+            // Iris offset relative to eye center, normalized by eye size.
+            // Head translation moves corners + iris together → offset stays ~0.
+            // Only eyeball rotation changes the offset.
+            const offX = ((lIris.x - lCX) / lEW + (rIris.x - rCX) / rEW) / 2;
+            const offY = ((lIris.y - lCY) / lEH + (rIris.y - rCY) / rEH) / 2;
+
+            rawGX = Math.max(0, Math.min(1, 0.5 - offX * EYE_SCALE));
+            rawGY = Math.max(0, Math.min(1, 0.5 + offY * EYE_SCALE));
+
             if (!gazeOn) {
               gazeOn = true;
               infoEl.style.opacity = '0';
