@@ -44,12 +44,12 @@ body {
 .ann {
   position: absolute;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
-  color: #ffffff;
+  color: #ff1500;
   letter-spacing: 0.07em;
   white-space: nowrap;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.65);
+  text-shadow: 0 0 8px rgba(255, 21, 0, 0.75), 0 0 2px rgba(255, 21, 0, 0.9);
   transform: translate(-50%, -50%);
   pointer-events: none;
   opacity: 0;
@@ -138,7 +138,7 @@ body {
 <div id="scene">
   <div id="videoWrapper">
     <video id="mainVideo"
-           src="people.mp4"
+           src="statue.mp4"
            autoplay loop muted playsinline></video>
     <div id="annLayer"></div>
   </div>
@@ -168,7 +168,6 @@ const H_ANA        = 90;
 const N_ANN        = 40;
 const ANA_INTERVAL = 1150;
 const REVEAL_FRAC  = 0.09;
-const BLUR_SCALE   = 0.052;
 const MAX_BLUR     = 8;
 const GAZE_LERP    = 0.13;
 const EYE_SCALE    = 3.5;        // fallback scale before calibration
@@ -182,6 +181,10 @@ const CAL_PTS = [
 const CAL_FILL_RATE  = 0.65;   // progress/sec when stable
 const CAL_DRAIN_RATE = 0.20;   // progress/sec lost when unstable
 const CAL_VAR_THRESH = 0.003;  // sum-of-variances threshold for "stable"
+
+// Blur accumulation rates (px per second)
+const BLUR_GROW_RATE  = 3.2;   // blur increases this fast when gaze is away
+const BLUR_CLEAR_RATE = 18.0;  // blur clears this fast when gaze is near
 
 /* ── DOM ───────────────────────────────────────────────────────────── */
 const mainVideo    = document.getElementById('mainVideo');
@@ -206,6 +209,7 @@ let rawGX     = 0.5, rawGY = 0.5;
 let sGX       = 0.5, sGY  = 0.5;
 let gazeOn    = false;
 let lastAnaTs = -9999;
+let lastGazeTs = 0;
 
 // Iris offset — updated every webcam frame by trackIris
 let curOffX = 0, curOffY = 0;
@@ -223,7 +227,7 @@ function buildPool() {
     const el = document.createElement('span');
     el.className = 'ann';
     annLayer.appendChild(el);
-    pool.push({ el, x: 0.5, y: 0.5, revealed: false });
+    pool.push({ el, x: 0.5, y: 0.5, revealed: false, blurLevel: 0 });
   }
 }
 
@@ -389,6 +393,7 @@ function analyze() {
       const p = pts[i];
       if (!a.revealed) {
         a.x = p.nx; a.y = p.ny;
+        a.blurLevel = 0;
         a.el.style.left = (p.nx * 100).toFixed(2) + '%';
         a.el.style.top  = (p.ny * 100).toFixed(2) + '%';
       }
@@ -403,7 +408,10 @@ function analyze() {
 }
 
 /* ── gaze reveal effect ──────────────────────────────────────────────── */
-function applyGaze() {
+function applyGaze(ts) {
+  const dt = lastGazeTs ? Math.min((ts - lastGazeTs) / 1000, 0.05) : 0;
+  lastGazeTs = ts;
+
   sGX += (rawGX - sGX) * GAZE_LERP;
   sGY += (rawGY - sGY) * GAZE_LERP;
 
@@ -417,22 +425,37 @@ function applyGaze() {
   gazeDot.style.top  = (rect.top  + gpy) + 'px';
 
   const revR = Math.min(W, H) * REVEAL_FRAC;
-  const bsca = Math.min(W, H) * BLUR_SCALE;
 
   for (const a of pool) {
     if (!a.el.textContent) continue;
     const d = Math.hypot(a.x * W - gpx, a.y * H - gpy);
-    if (d < revR) a.revealed = true;
+    const near = d < revR;
+
+    if (near) {
+      // Reveal freshly — reset blur so it appears sharp
+      if (!a.revealed) {
+        a.revealed = true;
+        a.blurLevel = 0;
+      }
+      // Gaze is close: quickly clear any accumulated blur
+      a.blurLevel = Math.max(0, a.blurLevel - BLUR_CLEAR_RATE * dt);
+    } else if (a.revealed) {
+      // Gaze has moved away: slowly accumulate blur
+      a.blurLevel = Math.min(MAX_BLUR, a.blurLevel + BLUR_GROW_RATE * dt);
+    }
+
     if (a.revealed) {
       a.el.style.opacity = '1';
-      a.el.style.filter  = `blur(${Math.min(MAX_BLUR, d / bsca).toFixed(2)}px)`;
+      a.el.style.filter  = a.blurLevel > 0.05
+        ? `blur(${a.blurLevel.toFixed(2)}px)`
+        : 'none';
     }
   }
 }
 
 /* ── main render loop ────────────────────────────────────────────────── */
 function mainLoop(ts) {
-  applyGaze();
+  applyGaze(ts);
   if (ts - lastAnaTs > ANA_INTERVAL) { analyze(); lastAnaTs = ts; }
   requestAnimationFrame(mainLoop);
 }
@@ -499,13 +522,13 @@ function drawIntro() {
   calCtx.fillStyle = '#000';
   calCtx.fillRect(0, 0, W, H);
   calCtx.textAlign = 'center';
-  calCtx.fillStyle = '#303030';
-  calCtx.font = 'bold 13px Courier New';
-  calCtx.fillText('GAZE CALIBRATION', W / 2, H / 2 - 36);
-  calCtx.fillStyle = '#181818';
-  calCtx.font = '9px Courier New';
-  calCtx.fillText('Look at each dot and hold still until the ring completes', W / 2, H / 2 - 12);
-  calCtx.fillText('Move only your eyes — keep your head still', W / 2, H / 2 + 4);
+  calCtx.fillStyle = '#505050';
+  calCtx.font = 'bold 20px Courier New';
+  calCtx.fillText('GAZE CALIBRATION', W / 2, H / 2 - 44);
+  calCtx.fillStyle = '#333333';
+  calCtx.font = '13px Courier New';
+  calCtx.fillText('Look at each dot and hold still until the ring completes', W / 2, H / 2 - 14);
+  calCtx.fillText('Move only your eyes — keep your head still', W / 2, H / 2 + 8);
 }
 
 function drawDone() {
@@ -513,8 +536,8 @@ function drawDone() {
   calCtx.fillStyle = '#000';
   calCtx.fillRect(0, 0, W, H);
   calCtx.textAlign = 'center';
-  calCtx.fillStyle = '#282828';
-  calCtx.font = 'bold 13px Courier New';
+  calCtx.fillStyle = '#505050';
+  calCtx.font = 'bold 22px Courier New';
   calCtx.fillText('SYNCHRONIZED', W / 2, H / 2);
 }
 
@@ -542,15 +565,15 @@ function awaitDot(px, py, index) {
 
       // Counter top-right
       calCtx.textAlign = 'right';
-      calCtx.fillStyle = '#1c1c1c';
-      calCtx.font = '9px Courier New';
-      calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 22, 26);
+      calCtx.fillStyle = '#383838';
+      calCtx.font = '13px Courier New';
+      calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 28, 34);
 
       // Instruction bottom-center
       calCtx.textAlign = 'center';
-      calCtx.fillStyle = '#161616';
-      calCtx.font = '9px Courier New';
-      calCtx.fillText('HOLD GAZE · KEEP HEAD STILL', W / 2, H - 20);
+      calCtx.fillStyle = '#303030';
+      calCtx.font = '13px Courier New';
+      calCtx.fillText('HOLD GAZE · KEEP HEAD STILL', W / 2, H - 24);
 
       // Guide ring (dim)
       calCtx.beginPath();
