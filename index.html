@@ -42,7 +42,7 @@ body {
   z-index: 1;
 }
 
-/* Text label overlay — head-revealed */
+/* Text label overlay — revealed on cursor contact */
 #annLayer {
   position: absolute;
   inset: 0;
@@ -54,24 +54,28 @@ body {
 .ann {
   position: absolute;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: #ff1500;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   white-space: nowrap;
-  text-shadow: 0 0 8px rgba(255, 21, 0, 0.75), 0 0 2px rgba(255, 21, 0, 0.9);
-  transform: translate(-50%, -50%);
+  text-shadow:
+    0 0 6px rgba(0,0,0,0.9),
+    0 0 2px rgba(0,0,0,0.9),
+    0 0 10px rgba(255, 21, 0, 0.6);
   pointer-events: none;
   opacity: 0;
+  transition: none;
 }
 
+/* Hollow circle cursor */
 #gazeDot {
   position: fixed;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.35);
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 10px rgba(255,255,255,0.08), inset 0 0 6px rgba(255,255,255,0.04);
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 50;
@@ -125,12 +129,12 @@ body {
   left: 50%;
   transform: translateX(-50%);
   background: transparent;
-  border: 1px solid #222;
-  color: #444;
+  border: 1px solid #555;
+  color: #aaaaaa;
   font-family: 'Courier New', monospace;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.25em;
-  padding: 12px 30px;
+  padding: 14px 36px;
   cursor: pointer;
   z-index: 1001;
   transition: border-color 0.2s, color 0.2s;
@@ -138,8 +142,8 @@ body {
 }
 
 #calStartBtn:hover {
-  border-color: #666;
-  color: #999;
+  border-color: #aaa;
+  color: #eee;
 }
 </style>
 </head>
@@ -176,17 +180,18 @@ import { FaceLandmarker, FilesetResolver }
 /* ── constants ─────────────────────────────────────────────────────── */
 const W_ANA          = 160;
 const H_ANA          = 90;
-const N_ANN          = 40;
-const ANA_INTERVAL   = 600;    // ms between full analyses (faster for moving object)
-const REVEAL_FRAC    = 0.12;   // reveal radius — larger for head-based control
-const MAX_BLUR       = 8;
-const GAZE_LERP      = 0.08;   // smoother lerp — head moves slower than eyes
+const N_ANN          = 42;
+const ANA_INTERVAL   = 600;
 
-// Edge dot drawing
-const DOT_THRESH     = 28;     // min Sobel magnitude to draw a dot
-const DOT_STEP       = 2;      // sample every N pixels in 160×90 space
+const REVEAL_FRAC    = 0.030;
+const MAX_BLUR       = 7;
+const GAZE_LERP      = 0.08;
+const BLUR_GROW_RATE  = 2.8;
+const BLUR_CLEAR_RATE = 20.0;
 
-// Calibration — snake-order 3×3 grid
+const DOT_THRESH      = 28;
+const DOT_STEP        = 2;
+
 const CAL_PTS = [
   [0.1, 0.1], [0.5, 0.1], [0.9, 0.1],
   [0.9, 0.5], [0.5, 0.5], [0.1, 0.5],
@@ -194,11 +199,7 @@ const CAL_PTS = [
 ];
 const CAL_FILL_RATE  = 0.65;
 const CAL_DRAIN_RATE = 0.20;
-const CAL_VAR_THRESH = 0.003;  // head-position variance threshold for "stable"
-
-// Blur accumulation
-const BLUR_GROW_RATE  = 3.2;
-const BLUR_CLEAR_RATE = 18.0;
+const CAL_VAR_THRESH = 0.003;
 
 /* ── DOM ───────────────────────────────────────────────────────────── */
 const mainVideo    = document.getElementById('mainVideo');
@@ -227,13 +228,11 @@ let gazeOn     = false;
 let lastAnaTs  = -9999;
 let lastGazeTs = 0;
 
-// Head position buffer — filled by trackHead()
 let curOffX = 0.5, curOffY = 0.5;
 const offXBuf = [], offYBuf = [];
 const BUF_MAX = 30;
 
-// Calibration affine map — null until calibrated
-let calMap = null; // { ax, bx, cx, ay, by, cy }
+let calMap = null;
 
 /* ── annotation pool ────────────────────────────────────────────────── */
 function buildPool() {
@@ -286,25 +285,41 @@ function sobel(px, w, h) {
   return { gx, gy, mg };
 }
 
-/* ── draw edge dots on dotCanvas ─────────────────────────────────────── */
-function drawEdgeDots(mg) {
+/* ── draw dots on dotCanvas ──────────────────────────────────────────── */
+function drawEdgeDots(mg, labeledPts) {
   const W = dotCanvas.width, H = dotCanvas.height;
   if (!W || !H) return;
   dotCtx.clearRect(0, 0, W, H);
 
-  // Batch all dots into a single fill call for performance
-  dotCtx.fillStyle = 'rgba(255, 21, 0, 0.55)';
+  // 1. Dense background dots — all strong edges, small + semi-transparent
+  dotCtx.fillStyle = 'rgba(255, 21, 0, 0.35)';
   dotCtx.beginPath();
   for (let y = 1; y < H_ANA - 1; y += DOT_STEP) {
     for (let x = 1; x < W_ANA - 1; x += DOT_STEP) {
       if (mg[y * W_ANA + x] > DOT_THRESH) {
         const sx = (x / W_ANA) * W;
         const sy = (y / H_ANA) * H;
-        dotCtx.rect(sx - 1, sy - 1, 2, 2);
+        dotCtx.rect(sx - 0.75, sy - 0.75, 1.5, 1.5);
       }
     }
   }
   dotCtx.fill();
+
+  // 2. Labeled interactive dots — larger + brighter, these trigger text on contact
+  for (const p of labeledPts) {
+    const sx = p.nx * W;
+    const sy = p.ny * H;
+    // Soft outer glow
+    dotCtx.beginPath();
+    dotCtx.arc(sx, sy, 5, 0, Math.PI * 2);
+    dotCtx.fillStyle = 'rgba(255, 21, 0, 0.18)';
+    dotCtx.fill();
+    // Solid core
+    dotCtx.beginPath();
+    dotCtx.arc(sx, sy, 3, 0, Math.PI * 2);
+    dotCtx.fillStyle = 'rgba(255, 21, 0, 0.95)';
+    dotCtx.fill();
+  }
 }
 
 /* ── region brightness / contrast / saturation ──────────────────────── */
@@ -380,10 +395,6 @@ function analyze() {
   const px = id.data;
   const { gx, gy, mg } = sobel(px, W_ANA, H_ANA);
 
-  // 1. Draw dense edge dots (always visible)
-  drawEdgeDots(mg);
-
-  // 2. Pick one representative label per grid cell
   const COLS = 7, ROWS = 6;
   const pts  = [];
 
@@ -416,31 +427,41 @@ function analyze() {
       else if (a >= 65 && a < 115) dir = 'VERTICAL';
       else                         dir = 'DIAGONAL';
 
-      const jx = nx + (Math.sin(nx * 137.5 + ny * 43.7) * 0.025);
-      const jy = ny + (Math.cos(ny * 98.3  + nx * 61.1) * 0.025);
-
       pts.push({
-        nx: Math.max(0.01, Math.min(0.99, jx)),
-        ny: Math.max(0.01, Math.min(0.99, jy)),
+        nx: Math.max(0.01, Math.min(0.99, nx)),
+        ny: Math.max(0.01, Math.min(0.99, ny)),
         label: makeLabel(dir, best, st, mv)
       });
     }
   }
 
+  // Draw dense background dots + larger labeled interactive dots
+  drawEdgeDots(mg, pts);
+
+  // Assign labels to pool — text appears RIGHT NEXT TO each dot
   const n = Math.min(pts.length, N_ANN);
   for (let i = 0; i < N_ANN; i++) {
     const a = pool[i];
     if (i < n) {
       const p = pts[i];
       if (!a.revealed) {
-        a.x = p.nx; a.y = p.ny;
+        a.x = p.nx;
+        a.y = p.ny;
         a.blurLevel = 0;
         a.el.style.left = (p.nx * 100).toFixed(2) + '%';
         a.el.style.top  = (p.ny * 100).toFixed(2) + '%';
+        // Place text to the right of dot normally,
+        // to the left if the dot is near the right edge
+        a.el.style.transform = p.nx > 0.62
+          ? 'translate(calc(-100% - 12px), -50%)'
+          : 'translate(12px, -50%)';
       }
       a.el.textContent = p.label;
     } else {
       a.el.textContent = '';
+      a.el.style.opacity = '0';
+      a.revealed = false;
+      a.blurLevel = 0;
     }
   }
 
@@ -448,7 +469,7 @@ function analyze() {
   prevPx = preCtx.getImageData(0, 0, W_ANA, H_ANA).data.slice();
 }
 
-/* ── gaze / head reveal effect ───────────────────────────────────────── */
+/* ── cursor reveal effect ────────────────────────────────────────────── */
 function applyGaze(ts) {
   const dt = lastGazeTs ? Math.min((ts - lastGazeTs) / 1000, 0.05) : 0;
   lastGazeTs = ts;
@@ -469,24 +490,30 @@ function applyGaze(ts) {
 
   for (const a of pool) {
     if (!a.el.textContent) continue;
+
     const d = Math.hypot(a.x * W - gpx, a.y * H - gpy);
     const near = d < revR;
 
     if (near) {
-      // First contact: snap to sharp
+      // Cursor touching dot — reveal text sharp
       if (!a.revealed) { a.revealed = true; a.blurLevel = 0; }
-      // Gaze close: clear blur
       a.blurLevel = Math.max(0, a.blurLevel - BLUR_CLEAR_RATE * dt);
-    } else if (a.revealed) {
-      // Gaze left: slowly blur
-      a.blurLevel = Math.min(MAX_BLUR, a.blurLevel + BLUR_GROW_RATE * dt);
-    }
-
-    if (a.revealed) {
       a.el.style.opacity = '1';
-      a.el.style.filter  = a.blurLevel > 0.05
-        ? `blur(${a.blurLevel.toFixed(2)}px)`
-        : 'none';
+      a.el.style.filter  = 'none';
+
+    } else if (a.revealed) {
+      // Cursor moved away — slowly blur
+      a.blurLevel = Math.min(MAX_BLUR, a.blurLevel + BLUR_GROW_RATE * dt);
+      a.el.style.opacity = '1';
+      a.el.style.filter  = `blur(${a.blurLevel.toFixed(2)}px)`;
+
+      // Fully blurred → hide and reset so dot is ready to reveal again
+      if (a.blurLevel >= MAX_BLUR * 0.98) {
+        a.revealed  = false;
+        a.blurLevel = 0;
+        a.el.style.opacity = '0';
+        a.el.style.filter  = 'none';
+      }
     }
   }
 }
@@ -560,13 +587,29 @@ function drawIntro() {
   calCtx.fillStyle = '#000';
   calCtx.fillRect(0, 0, W, H);
   calCtx.textAlign = 'center';
-  calCtx.fillStyle = '#505050';
-  calCtx.font = 'bold 20px Courier New';
-  calCtx.fillText('HEAD TRACKING CALIBRATION', W / 2, H / 2 - 44);
-  calCtx.fillStyle = '#333333';
-  calCtx.font = '13px Courier New';
-  calCtx.fillText('Point your head at each dot and hold still until the ring completes', W / 2, H / 2 - 14);
-  calCtx.fillText('Move only your head — keep your body still', W / 2, H / 2 + 8);
+
+  // Title
+  calCtx.fillStyle = '#cccccc';
+  calCtx.font = 'bold 22px Courier New';
+  calCtx.fillText('HEAD TRACKING CALIBRATION', W / 2, H / 2 - 52);
+
+  // Divider
+  calCtx.strokeStyle = '#2a2a2a';
+  calCtx.lineWidth = 1;
+  calCtx.beginPath();
+  calCtx.moveTo(W / 2 - 220, H / 2 - 36);
+  calCtx.lineTo(W / 2 + 220, H / 2 - 36);
+  calCtx.stroke();
+
+  // Instructions
+  calCtx.fillStyle = '#888888';
+  calCtx.font = '14px Courier New';
+  calCtx.fillText('Point your head at each dot and hold still', W / 2, H / 2 - 14);
+  calCtx.fillText('until the ring fills completely', W / 2, H / 2 + 8);
+
+  calCtx.fillStyle = '#484848';
+  calCtx.font = '12px Courier New';
+  calCtx.fillText('Move only your head — keep your body still', W / 2, H / 2 + 34);
 }
 
 function drawDone() {
@@ -574,9 +617,12 @@ function drawDone() {
   calCtx.fillStyle = '#000';
   calCtx.fillRect(0, 0, W, H);
   calCtx.textAlign = 'center';
-  calCtx.fillStyle = '#505050';
-  calCtx.font = 'bold 22px Courier New';
-  calCtx.fillText('SYNCHRONIZED', W / 2, H / 2);
+  calCtx.fillStyle = '#bbbbbb';
+  calCtx.font = 'bold 24px Courier New';
+  calCtx.fillText('SYNCHRONIZED', W / 2, H / 2 - 8);
+  calCtx.fillStyle = '#444444';
+  calCtx.font = '13px Courier New';
+  calCtx.fillText('Calibration complete', W / 2, H / 2 + 18);
 }
 
 function awaitDot(px, py, index) {
@@ -600,26 +646,22 @@ function awaitDot(px, py, index) {
       calCtx.fillStyle = '#000';
       calCtx.fillRect(0, 0, W, H);
 
-      // Counter top-right
       calCtx.textAlign = 'right';
-      calCtx.fillStyle = '#383838';
-      calCtx.font = '13px Courier New';
-      calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 28, 34);
+      calCtx.fillStyle = '#777777';
+      calCtx.font = '14px Courier New';
+      calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 28, 36);
 
-      // Instruction bottom-center
       calCtx.textAlign = 'center';
-      calCtx.fillStyle = '#303030';
+      calCtx.fillStyle = '#666666';
       calCtx.font = '13px Courier New';
-      calCtx.fillText('POINT HEAD AT DOT · HOLD STILL', W / 2, H - 24);
+      calCtx.fillText('POINT HEAD AT DOT · HOLD STILL', W / 2, H - 26);
 
-      // Guide ring
       calCtx.beginPath();
       calCtx.arc(px, py, 22, 0, Math.PI * 2);
       calCtx.strokeStyle = '#1a1a1a';
       calCtx.lineWidth = 1.5;
       calCtx.stroke();
 
-      // Progress arc
       if (progress > 0) {
         calCtx.beginPath();
         calCtx.arc(px, py, 22, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
@@ -628,7 +670,6 @@ function awaitDot(px, py, index) {
         calCtx.stroke();
       }
 
-      // Center dot
       const r = 3.5 + stab * 2.5;
       calCtx.beginPath();
       calCtx.arc(px, py, r, 0, Math.PI * 2);
@@ -730,10 +771,6 @@ async function startHeadTracking() {
         if (res.faceLandmarks?.length > 0) {
           const lm = res.faceLandmarks[0];
 
-          // Head position = weighted average of stable facial landmarks
-          // Nose tip (1), glabella/between-brows (168), chin (152),
-          // left cheek (234), right cheek (454)
-          // Nose tip gets highest weight — most directional indicator
           const nose = lm[1];
           const brow = lm[168];
           const chin = lm[152];
@@ -743,7 +780,6 @@ async function startHeadTracking() {
           const hxRaw = (nose.x * 4 + brow.x + chin.x + lChk.x + rChk.x) / 8;
           const hyRaw = (nose.y * 4 + brow.y + chin.y + lChk.y + rChk.y) / 8;
 
-          // Mirror X — webcam feed is horizontally flipped
           const headX = 1 - hxRaw;
           const headY = hyRaw;
 
@@ -752,12 +788,10 @@ async function startHeadTracking() {
           offXBuf.push(headX); if (offXBuf.length > BUF_MAX) offXBuf.shift();
           offYBuf.push(headY); if (offYBuf.length > BUF_MAX) offYBuf.shift();
 
-          // Map head position → screen coordinates
           if (calMap) {
             rawGX = calMap.ax * headX + calMap.bx * headY + calMap.cx;
             rawGY = calMap.ay * headX + calMap.by * headY + calMap.cy;
           } else {
-            // Direct mapping: nose position in webcam ≈ gaze on screen
             rawGX = headX;
             rawGY = headY;
           }
@@ -777,7 +811,7 @@ async function startHeadTracking() {
 
 /* ── mouse / touch fallback ──────────────────────────────────────────── */
 function enablePointerFallback() {
-  infoEl.textContent = 'MOVE MOUSE OVER VIDEO · REVEALS ANALYSIS';
+  infoEl.textContent = 'MOVE MOUSE TO EXPLORE · HOVER DOTS TO REVEAL';
   const onMove = (cx, cy) => {
     const rect = videoWrapper.getBoundingClientRect();
     const nx = (cx - rect.left) / rect.width;
