@@ -46,14 +46,13 @@ body {
   font-family: 'Courier New', Courier, monospace;
   font-size: 9px;
   font-weight: 700;
-  color: #ff1500;
+  color: #ffffff;
   letter-spacing: 0.07em;
   white-space: nowrap;
-  text-shadow: 0 0 6px rgba(255, 21, 0, 0.65);
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.65);
   transform: translate(-50%, -50%);
   pointer-events: none;
   opacity: 0;
-  /* filter and opacity are updated directly each frame — no CSS transition */
 }
 
 #gazeDot {
@@ -61,11 +60,11 @@ body {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 20, 0, 0.4);
-  box-shadow: 0 0 10px rgba(255, 20, 0, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
   transform: translate(-50%, -50%);
   pointer-events: none;
-  z-index: 999;
+  z-index: 50;
 }
 
 #webcamEl {
@@ -77,6 +76,7 @@ body {
   opacity: 0.07;
   transform: scaleX(-1);
   border: 1px solid #0f0f0f;
+  z-index: 50;
 }
 
 #info {
@@ -91,6 +91,45 @@ body {
   pointer-events: none;
   transition: opacity 2s ease;
   white-space: nowrap;
+  z-index: 50;
+}
+
+/* ── calibration overlay ── */
+#calOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #000;
+}
+
+#calCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#calStartBtn {
+  position: absolute;
+  top: 58%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  border: 1px solid #222;
+  color: #444;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  padding: 12px 30px;
+  cursor: pointer;
+  z-index: 1001;
+  transition: border-color 0.2s, color 0.2s;
+  display: none;
+}
+
+#calStartBtn:hover {
+  border-color: #666;
+  color: #999;
 }
 </style>
 </head>
@@ -99,7 +138,7 @@ body {
 <div id="scene">
   <div id="videoWrapper">
     <video id="mainVideo"
-           src="Roman_Statue_Rotation_Video.mp4"
+           src="people.mp4"
            autoplay loop muted playsinline></video>
     <div id="annLayer"></div>
   </div>
@@ -108,6 +147,11 @@ body {
 <div id="gazeDot"></div>
 <video id="webcamEl" autoplay muted playsinline></video>
 <div id="info">ALLOW CAMERA ACCESS — GAZE REVEALS ANALYSIS</div>
+
+<div id="calOverlay">
+  <canvas id="calCanvas"></canvas>
+  <button id="calStartBtn">BEGIN CALIBRATION</button>
+</div>
 
 <canvas id="anaC" style="display:none" width="160" height="90"></canvas>
 <canvas id="preC" style="display:none" width="160" height="90"></canvas>
@@ -121,12 +165,23 @@ import { FaceLandmarker, FilesetResolver }
 /* ── constants ─────────────────────────────────────────────────────── */
 const W_ANA        = 160;
 const H_ANA        = 90;
-const N_ANN        = 40;          // annotation pool size
-const ANA_INTERVAL = 1150;        // ms between analysis passes
-const REVEAL_FRAC  = 0.09;        // gaze radius as fraction of min(W,H)
-const BLUR_SCALE   = 0.052;       // blur = dist / (min(W,H) * BLUR_SCALE)
-const MAX_BLUR     = 8;           // px cap
-const GAZE_LERP    = 0.13;        // exponential smooth factor
+const N_ANN        = 40;
+const ANA_INTERVAL = 1150;
+const REVEAL_FRAC  = 0.09;
+const BLUR_SCALE   = 0.052;
+const MAX_BLUR     = 8;
+const GAZE_LERP    = 0.13;
+const EYE_SCALE    = 3.5;        // fallback scale before calibration
+
+// Calibration — snake-order 3×3 grid
+const CAL_PTS = [
+  [0.1, 0.1], [0.5, 0.1], [0.9, 0.1],
+  [0.9, 0.5], [0.5, 0.5], [0.1, 0.5],
+  [0.1, 0.9], [0.5, 0.9], [0.9, 0.9]
+];
+const CAL_FILL_RATE  = 0.65;   // progress/sec when stable
+const CAL_DRAIN_RATE = 0.20;   // progress/sec lost when unstable
+const CAL_VAR_THRESH = 0.003;  // sum-of-variances threshold for "stable"
 
 /* ── DOM ───────────────────────────────────────────────────────────── */
 const mainVideo    = document.getElementById('mainVideo');
@@ -139,16 +194,26 @@ const anaC         = document.getElementById('anaC');
 const preC         = document.getElementById('preC');
 const anaCtx = anaC.getContext('2d', { willReadFrequently: true });
 const preCtx = preC.getContext('2d', { willReadFrequently: true });
+const calOverlay   = document.getElementById('calOverlay');
+const calCanvas    = document.getElementById('calCanvas');
+const calCtx       = calCanvas.getContext('2d');
+const calStartBtn  = document.getElementById('calStartBtn');
 
-/* ── state ─────────────────────────────────────────────────────────── */
-let pool     = [];
-let prevPx   = null;
-let rawGX    = 0.5;
-let rawGY    = 0.5;
-let sGX      = 0.5;
-let sGY      = 0.5;
-let gazeOn   = false;
+/* ── runtime state ─────────────────────────────────────────────────── */
+let pool      = [];
+let prevPx    = null;
+let rawGX     = 0.5, rawGY = 0.5;
+let sGX       = 0.5, sGY  = 0.5;
+let gazeOn    = false;
 let lastAnaTs = -9999;
+
+// Iris offset — updated every webcam frame by trackIris
+let curOffX = 0, curOffY = 0;
+const offXBuf = [], offYBuf = [];
+const BUF_MAX = 30;
+
+// Calibration result — null until calibrated
+let calMap = null; // { ax, bx, cx, ay, by, cy }
 
 /* ── annotation pool ────────────────────────────────────────────────── */
 function buildPool() {
@@ -190,11 +255,11 @@ function sobel(px, w, h) {
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       const i  = y * w + x;
-      const tl = g[i - w - 1], tc = g[i - w], tr = g[i - w + 1];
-      const ml = g[i - 1],                     mr = g[i + 1];
-      const bl = g[i + w - 1], bc = g[i + w], br = g[i + w + 1];
-      gx[i] = (tr + 2 * mr + br) - (tl + 2 * ml + bl);
-      gy[i] = (bl + 2 * bc + br) - (tl + 2 * tc + tr);
+      const tl = g[i-w-1], tc = g[i-w], tr = g[i-w+1];
+      const ml = g[i-1],                mr = g[i+1];
+      const bl = g[i+w-1], bc = g[i+w], br = g[i+w+1];
+      gx[i] = (tr + 2*mr + br) - (tl + 2*ml + bl);
+      gy[i] = (bl + 2*bc + br) - (tl + 2*tc + tr);
       mg[i] = Math.hypot(gx[i], gy[i]);
     }
   }
@@ -210,7 +275,7 @@ function rStats(px, w, h, nx0, ny0, nx1, ny1) {
   let sL = 0, sL2 = 0, sS = 0, n = 0;
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      const o = (y * w + x) * 4;
+      const o  = (y * w + x) * 4;
       const r  = px[o]     / 255;
       const gr = px[o + 1] / 255;
       const b  = px[o + 2] / 255;
@@ -229,7 +294,7 @@ function rStats(px, w, h, nx0, ny0, nx1, ny1) {
   };
 }
 
-/* ── frame-to-frame motion score for a region ────────────────────────── */
+/* ── frame-to-frame motion score ─────────────────────────────────────── */
 function rMotion(px, prev, w, h, nx0, ny0, nx1, ny1) {
   if (!prev) return 0;
   const x0 = Math.max(0, Math.floor(nx0 * w));
@@ -249,30 +314,29 @@ function rMotion(px, prev, w, h, nx0, ny0, nx1, ny1) {
   return n ? d / n : 0;
 }
 
-/* ── compose label from analysis results ─────────────────────────────── */
+/* ── label composer ──────────────────────────────────────────────────── */
 function makeLabel(dir, mag, st, mv) {
-  if (mv > 38)             return `CRITICAL / MOTION_FAST`;
+  if (mv > 38)           return `CRITICAL / MOTION_FAST`;
   if (mv > 16) {
     const s = Math.min(99, Math.max(10, Math.round(99 - mv * 2.4)));
     return `${dir} / STAB_${s}%`;
   }
-  if (st.contrast > 52)    return `${dir} / CONTRAST_HIGH`;
-  if (st.bright   > 178)   return `DETAIL / BRIGHT_${st.bright}`;
-  if (st.bright   < 42)    return `DETAIL / DARK_${st.bright}`;
-  if (mag         > 210)   return `${dir} / SHARP_${Math.round(mag / 3)}`;
-  if (st.sat      > 42)    return `${dir} / SAT_${st.sat}%`;
-  if (st.contrast > 22)    return `${dir} / CONTRAST_${st.contrast}`;
+  if (st.contrast > 52)  return `${dir} / CONTRAST_HIGH`;
+  if (st.bright   > 178) return `DETAIL / BRIGHT_${st.bright}`;
+  if (st.bright   < 42)  return `DETAIL / DARK_${st.bright}`;
+  if (mag         > 210) return `${dir} / SHARP_${Math.round(mag / 3)}`;
+  if (st.sat      > 42)  return `${dir} / SAT_${st.sat}%`;
+  if (st.contrast > 22)  return `${dir} / CONTRAST_${st.contrast}`;
   return `STABLE / EDGE_${Math.round(mag)}`;
 }
 
-/* ── full frame analysis pass ────────────────────────────────────────── */
+/* ── frame analysis ──────────────────────────────────────────────────── */
 function analyze() {
   if (mainVideo.readyState < 2) return;
 
   anaCtx.drawImage(mainVideo, 0, 0, W_ANA, H_ANA);
   const id = anaCtx.getImageData(0, 0, W_ANA, H_ANA);
   const px = id.data;
-
   const { gx, gy, mg } = sobel(px, W_ANA, H_ANA);
 
   const COLS = 7, ROWS = 6;
@@ -291,24 +355,21 @@ function analyze() {
           const i = y * W_ANA + x;
           if (mg[i] > best) { best = mg[i]; bi = i; }
         }
-
       if (best < 16 || bi < 0) continue;
 
-      const bx = bi % W_ANA;
-      const by = Math.floor(bi / W_ANA);
-      const nx = bx / W_ANA;
-      const ny = by / H_ANA;
+      const bx = bi % W_ANA, by = Math.floor(bi / W_ANA);
+      const nx = bx / W_ANA,  ny = by / H_ANA;
       const m  = 0.07;
-      const st = rStats(px,    W_ANA, H_ANA, nx - m, ny - m, nx + m, ny + m);
-      const mv = rMotion(px, prevPx, W_ANA, H_ANA, nx - m, ny - m, nx + m, ny + m);
+      const st = rStats(px,    W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
+      const mv = rMotion(px, prevPx, W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
 
       const agx = Math.abs(gx[bi]), agy = Math.abs(gy[bi]);
       const a   = ((Math.atan2(gy[bi], gx[bi]) * 180 / Math.PI) % 180 + 180) % 180;
       let dir;
-      if (agx > 90 && agy > 90)     dir = 'CORNER';
-      else if (a < 25 || a >= 155)  dir = 'HORIZONTAL';
-      else if (a >= 65 && a < 115)  dir = 'VERTICAL';
-      else                          dir = 'DIAGONAL';
+      if (agx > 90 && agy > 90)    dir = 'CORNER';
+      else if (a < 25 || a >= 155) dir = 'HORIZONTAL';
+      else if (a >= 65 && a < 115) dir = 'VERTICAL';
+      else                         dir = 'DIAGONAL';
 
       const jx = nx + (Math.sin(nx * 137.5 + ny * 43.7) * 0.025);
       const jy = ny + (Math.cos(ny * 98.3  + nx * 61.1) * 0.025);
@@ -327,8 +388,7 @@ function analyze() {
     if (i < n) {
       const p = pts[i];
       if (!a.revealed) {
-        a.x = p.nx;
-        a.y = p.ny;
+        a.x = p.nx; a.y = p.ny;
         a.el.style.left = (p.nx * 100).toFixed(2) + '%';
         a.el.style.top  = (p.ny * 100).toFixed(2) + '%';
       }
@@ -342,7 +402,7 @@ function analyze() {
   prevPx = preCtx.getImageData(0, 0, W_ANA, H_ANA).data.slice();
 }
 
-/* ── per-frame gaze reveal effect ────────────────────────────────────── */
+/* ── gaze reveal effect ──────────────────────────────────────────────── */
 function applyGaze() {
   sGX += (rawGX - sGX) * GAZE_LERP;
   sGY += (rawGY - sGY) * GAZE_LERP;
@@ -351,29 +411,21 @@ function applyGaze() {
   const H = videoWrapper.offsetHeight;
   if (!W || !H) return;
 
-  const gpx = sGX * W;
-  const gpy = sGY * H;
-
+  const gpx = sGX * W, gpy = sGY * H;
   const rect = videoWrapper.getBoundingClientRect();
   gazeDot.style.left = (rect.left + gpx) + 'px';
   gazeDot.style.top  = (rect.top  + gpy) + 'px';
 
-  const revR  = Math.min(W, H) * REVEAL_FRAC;
-  const bsca  = Math.min(W, H) * BLUR_SCALE;
+  const revR = Math.min(W, H) * REVEAL_FRAC;
+  const bsca = Math.min(W, H) * BLUR_SCALE;
 
   for (const a of pool) {
     if (!a.el.textContent) continue;
-
-    const ax = a.x * W;
-    const ay = a.y * H;
-    const d  = Math.hypot(ax - gpx, ay - gpy);
-
+    const d = Math.hypot(a.x * W - gpx, a.y * H - gpy);
     if (d < revR) a.revealed = true;
-
     if (a.revealed) {
       a.el.style.opacity = '1';
-      const blur = Math.min(MAX_BLUR, d / bsca);
-      a.el.style.filter = `blur(${blur.toFixed(2)}px)`;
+      a.el.style.filter  = `blur(${Math.min(MAX_BLUR, d / bsca).toFixed(2)}px)`;
     }
   }
 }
@@ -381,11 +433,199 @@ function applyGaze() {
 /* ── main render loop ────────────────────────────────────────────────── */
 function mainLoop(ts) {
   applyGaze();
-  if (ts - lastAnaTs > ANA_INTERVAL) {
-    analyze();
-    lastAnaTs = ts;
-  }
+  if (ts - lastAnaTs > ANA_INTERVAL) { analyze(); lastAnaTs = ts; }
   requestAnimationFrame(mainLoop);
+}
+
+/* ── iris stability (0 = jittery, 1 = locked) ───────────────────────── */
+function stability() {
+  const N = Math.min(offXBuf.length, 20);
+  if (N < 8) return 0;
+  const xs = offXBuf.slice(-N), ys = offYBuf.slice(-N);
+  const mx = xs.reduce((a, b) => a + b, 0) / N;
+  const my = ys.reduce((a, b) => a + b, 0) / N;
+  const vx = xs.reduce((a, b) => a + (b - mx) ** 2, 0) / N;
+  const vy = ys.reduce((a, b) => a + (b - my) ** 2, 0) / N;
+  return Math.max(0, Math.min(1, 1 - (vx + vy) / CAL_VAR_THRESH));
+}
+
+/* ── affine least-squares fit ────────────────────────────────────────── */
+function fitAffine(data) {
+  let A00=0, A01=0, A02=0, A11=0, A12=0;
+  let Bx0=0, Bx1=0, Bx2=0, By0=0, By1=0, By2=0;
+  const n = data.length;
+  for (const d of data) {
+    A00 += d.ox*d.ox; A01 += d.ox*d.oy; A02 += d.ox;
+    A11 += d.oy*d.oy; A12 += d.oy;
+    Bx0 += d.ox*d.sx; Bx1 += d.oy*d.sx; Bx2 += d.sx;
+    By0 += d.ox*d.sy; By1 += d.oy*d.sy; By2 += d.sy;
+  }
+  const M = [[A00,A01,A02],[A01,A11,A12],[A02,A12,n]];
+  const inv = inv3(M);
+  if (!inv) return null;
+  const [ax,bx,cx] = mv3(inv, [Bx0,Bx1,Bx2]);
+  const [ay,by,cy] = mv3(inv, [By0,By1,By2]);
+  return { ax, bx, cx, ay, by, cy };
+}
+
+function inv3(m) {
+  const [[a,b,c],[d,e,f],[g,h,k]] = m;
+  const det = a*(e*k-f*h) - b*(d*k-f*g) + c*(d*h-e*g);
+  if (Math.abs(det) < 1e-12) return null;
+  const s = 1 / det;
+  return [
+    [(e*k-f*h)*s, (c*h-b*k)*s, (b*f-c*e)*s],
+    [(f*g-d*k)*s, (a*k-c*g)*s, (c*d-a*f)*s],
+    [(d*h-e*g)*s, (b*g-a*h)*s, (a*e-b*d)*s]
+  ];
+}
+
+function mv3(m, v) {
+  return [
+    m[0][0]*v[0]+m[0][1]*v[1]+m[0][2]*v[2],
+    m[1][0]*v[0]+m[1][1]*v[1]+m[1][2]*v[2],
+    m[2][0]*v[0]+m[2][1]*v[1]+m[2][2]*v[2]
+  ];
+}
+
+/* ── calibration canvas helpers ──────────────────────────────────────── */
+function resizeCal() {
+  calCanvas.width  = window.innerWidth;
+  calCanvas.height = window.innerHeight;
+}
+
+function drawIntro() {
+  const W = calCanvas.width, H = calCanvas.height;
+  calCtx.fillStyle = '#000';
+  calCtx.fillRect(0, 0, W, H);
+  calCtx.textAlign = 'center';
+  calCtx.fillStyle = '#303030';
+  calCtx.font = 'bold 13px Courier New';
+  calCtx.fillText('GAZE CALIBRATION', W / 2, H / 2 - 36);
+  calCtx.fillStyle = '#181818';
+  calCtx.font = '9px Courier New';
+  calCtx.fillText('Look at each dot and hold still until the ring completes', W / 2, H / 2 - 12);
+  calCtx.fillText('Move only your eyes — keep your head still', W / 2, H / 2 + 4);
+}
+
+function drawDone() {
+  const W = calCanvas.width, H = calCanvas.height;
+  calCtx.fillStyle = '#000';
+  calCtx.fillRect(0, 0, W, H);
+  calCtx.textAlign = 'center';
+  calCtx.fillStyle = '#282828';
+  calCtx.font = 'bold 13px Courier New';
+  calCtx.fillText('SYNCHRONIZED', W / 2, H / 2);
+}
+
+// Animate one calibration dot. Returns Promise<{ox,oy}> with mean iris offset.
+function awaitDot(px, py, index) {
+  return new Promise(resolve => {
+    let progress = 0;
+    let prevTs   = null;
+    const samples = [];
+
+    function frame(ts) {
+      const dt   = prevTs ? Math.min((ts - prevTs) / 1000, 0.05) : 0;
+      prevTs     = ts;
+      const stab = stability();
+
+      progress += stab * CAL_FILL_RATE * dt;
+      progress -= (1 - stab) * CAL_DRAIN_RATE * dt;
+      progress  = Math.max(0, Math.min(1, progress));
+
+      if (stab > 0.45) samples.push({ ox: curOffX, oy: curOffY });
+
+      const W = calCanvas.width, H = calCanvas.height;
+      calCtx.fillStyle = '#000';
+      calCtx.fillRect(0, 0, W, H);
+
+      // Counter top-right
+      calCtx.textAlign = 'right';
+      calCtx.fillStyle = '#1c1c1c';
+      calCtx.font = '9px Courier New';
+      calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 22, 26);
+
+      // Instruction bottom-center
+      calCtx.textAlign = 'center';
+      calCtx.fillStyle = '#161616';
+      calCtx.font = '9px Courier New';
+      calCtx.fillText('HOLD GAZE · KEEP HEAD STILL', W / 2, H - 20);
+
+      // Guide ring (dim)
+      calCtx.beginPath();
+      calCtx.arc(px, py, 22, 0, Math.PI * 2);
+      calCtx.strokeStyle = '#1a1a1a';
+      calCtx.lineWidth = 1.5;
+      calCtx.stroke();
+
+      // White progress arc
+      if (progress > 0) {
+        calCtx.beginPath();
+        calCtx.arc(px, py, 22, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+        calCtx.strokeStyle = `rgba(255,255,255,${0.35 + stab * 0.65})`;
+        calCtx.lineWidth = 2;
+        calCtx.stroke();
+      }
+
+      // Center dot — grows and brightens with stability
+      const r = 3.5 + stab * 2.5;
+      calCtx.beginPath();
+      calCtx.arc(px, py, r, 0, Math.PI * 2);
+      calCtx.fillStyle = `rgba(255,255,255,${0.2 + stab * 0.8})`;
+      calCtx.fill();
+
+      if (progress >= 1) {
+        // Flash complete
+        calCtx.beginPath();
+        calCtx.arc(px, py, 22, 0, Math.PI * 2);
+        calCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+        calCtx.lineWidth = 2;
+        calCtx.stroke();
+
+        const n  = samples.length || 1;
+        const ox = samples.reduce((s, v) => s + v.ox, 0) / n;
+        const oy = samples.reduce((s, v) => s + v.oy, 0) / n;
+        setTimeout(() => resolve({ ox, oy }), 280);
+      } else {
+        requestAnimationFrame(frame);
+      }
+    }
+
+    requestAnimationFrame(frame);
+  });
+}
+
+/* ── full calibration sequence ───────────────────────────────────────── */
+async function runCalibration() {
+  resizeCal();
+  window.addEventListener('resize', resizeCal);
+
+  drawIntro();
+  calStartBtn.style.display = 'block';
+  await new Promise(r => calStartBtn.addEventListener('click', r, { once: true }));
+  calStartBtn.style.display = 'none';
+
+  const calData = [];
+
+  for (let i = 0; i < CAL_PTS.length; i++) {
+    const [nx, ny] = CAL_PTS[i];
+    const px = nx * window.innerWidth;
+    const py = ny * window.innerHeight;
+
+    if (i > 0) await new Promise(r => setTimeout(r, 320));
+
+    const { ox, oy } = await awaitDot(px, py, i);
+    calData.push({ sx: nx, sy: ny, ox, oy });
+  }
+
+  if (calData.length >= 4) {
+    calMap = fitAffine(calData);
+  }
+
+  drawDone();
+  await new Promise(r => setTimeout(r, 900));
+  calOverlay.style.display = 'none';
 }
 
 /* ── MediaPipe iris tracking ─────────────────────────────────────────── */
@@ -410,9 +650,8 @@ async function startEyeTracking() {
     return false;
   }
 
-  let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }
     });
     webcamEl.srcObject = stream;
@@ -431,14 +670,37 @@ async function startEyeTracking() {
         if (res.faceLandmarks?.length > 0) {
           const lm = res.faceLandmarks[0];
           if (lm.length > 473) {
-            // 468 = left iris center, 473 = right iris center; mirror X
-            const li = lm[468], ri = lm[473];
-            rawGX = 1 - (li.x + ri.x) * 0.5;
-            rawGY =     (li.y + ri.y) * 0.5;
-            if (!gazeOn) {
-              gazeOn = true;
-              infoEl.style.opacity = '0';
+            // Eye corner landmarks:
+            //   Left:  outer=33, inner=133, top=159, bottom=145, iris=468
+            //   Right: inner=362, outer=263, top=386, bottom=374, iris=473
+            const lOuter=lm[33],  lInner=lm[133], lTop=lm[159], lBot=lm[145], lIris=lm[468];
+            const rInner=lm[362], rOuter=lm[263], rTop=lm[386], rBot=lm[374], rIris=lm[473];
+
+            const lCX=(lOuter.x+lInner.x)/2, lCY=(lTop.y+lBot.y)/2;
+            const lEW=Math.abs(lInner.x-lOuter.x)||0.01, lEH=Math.abs(lBot.y-lTop.y)||0.01;
+            const rCX=(rOuter.x+rInner.x)/2, rCY=(rTop.y+rBot.y)/2;
+            const rEW=Math.abs(rOuter.x-rInner.x)||0.01, rEH=Math.abs(rBot.y-rTop.y)||0.01;
+
+            // Iris offset relative to eye socket — head-translation-invariant
+            const offX = ((lIris.x-lCX)/lEW + (rIris.x-rCX)/rEW) / 2;
+            const offY = ((lIris.y-lCY)/lEH + (rIris.y-rCY)/rEH) / 2;
+
+            curOffX = offX; curOffY = offY;
+            offXBuf.push(offX); if (offXBuf.length > BUF_MAX) offXBuf.shift();
+            offYBuf.push(offY); if (offYBuf.length > BUF_MAX) offYBuf.shift();
+
+            // Apply calibrated mapping or fallback
+            if (calMap) {
+              rawGX = calMap.ax*offX + calMap.bx*offY + calMap.cx;
+              rawGY = calMap.ay*offX + calMap.by*offY + calMap.cy;
+            } else {
+              rawGX = 0.5 - offX * EYE_SCALE;
+              rawGY = 0.5 + offY * EYE_SCALE;
             }
+            rawGX = Math.max(0, Math.min(1, rawGX));
+            rawGY = Math.max(0, Math.min(1, rawGY));
+
+            if (!gazeOn) { gazeOn = true; infoEl.style.opacity = '0'; }
           }
         }
       } catch (_) { /* frame skip */ }
@@ -452,7 +714,6 @@ async function startEyeTracking() {
 /* ── mouse / touch fallback ──────────────────────────────────────────── */
 function enablePointerFallback() {
   infoEl.textContent = 'MOVE MOUSE OVER VIDEO · GAZE REVEALS ANALYSIS';
-
   const onMove = (cx, cy) => {
     const rect = videoWrapper.getBoundingClientRect();
     const nx = (cx - rect.left) / rect.width;
@@ -462,7 +723,6 @@ function enablePointerFallback() {
       if (!gazeOn) { gazeOn = true; infoEl.style.opacity = '0'; }
     }
   };
-
   document.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
   document.addEventListener('touchmove', e => {
     e.preventDefault();
@@ -480,11 +740,18 @@ async function boot() {
   if (mainVideo.readyState < 2)
     await new Promise(r => mainVideo.addEventListener('canplay', r, { once: true }));
 
-  analyze();
-  requestAnimationFrame(mainLoop);
-
   const ok = await startEyeTracking();
-  if (!ok) enablePointerFallback();
+
+  if (ok) {
+    await runCalibration();
+  } else {
+    calOverlay.style.display = 'none';
+    enablePointerFallback();
+  }
+
+  analyze();
+  lastAnaTs = performance.now();
+  requestAnimationFrame(mainLoop);
 }
 
 boot();
