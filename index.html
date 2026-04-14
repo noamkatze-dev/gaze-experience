@@ -34,7 +34,6 @@ body {
   height: 100%;
 }
 
-/* Dot overlay — all dots are uniform small points */
 #dotCanvas {
   position: absolute;
   inset: 0;
@@ -42,7 +41,6 @@ body {
   z-index: 1;
 }
 
-/* Text label overlay — revealed when cursor touches a dot */
 #annLayer {
   position: absolute;
   inset: 0;
@@ -67,7 +65,6 @@ body {
   opacity: 0;
 }
 
-/* Hollow circle cursor */
 #gazeDot {
   position: fixed;
   width: 22px;
@@ -107,7 +104,6 @@ body {
   z-index: 50;
 }
 
-/* ── calibration overlay ── */
 #calOverlay {
   position: fixed;
   inset: 0;
@@ -180,20 +176,19 @@ import { FaceLandmarker, FilesetResolver }
 const W_ANA = 160;
 const H_ANA = 90;
 
-// Dense grid: 12 cols × 9 rows = up to 108 dots, one per cell
-const GRID_COLS = 12;
-const GRID_ROWS = 9;
-const N_ANN     = GRID_COLS * GRID_ROWS; // 108 pool slots
+// Pixel-scan approach — collect every strong edge, cap at N_ANN
+const N_ANN      = 250;   // max interactive dots
+const DOT_STEP   = 2;     // sample every N px in the 160×90 analysis canvas
+const DOT_THRESH = 10;    // min Sobel magnitude — low so we get dense coverage
 
-const ANA_INTERVAL   = 600;   // ms between analyses
-const REVEAL_FRAC    = 0.030; // cursor must be within ~32px of a dot (on 1080p)
+const ANA_INTERVAL   = 600;
+const REVEAL_FRAC    = 0.030;
 const MAX_BLUR       = 7;
 const GAZE_LERP      = 0.08;
 
-const BLUR_GROW_RATE  = 2.8;  // px/s — blur speed when cursor leaves
-const BLUR_CLEAR_RATE = 20.0; // px/s — blur clears when cursor returns
+const BLUR_GROW_RATE  = 2.8;
+const BLUR_CLEAR_RATE = 20.0;
 
-// Calibration
 const CAL_PTS = [
   [0.1, 0.1], [0.5, 0.1], [0.9, 0.1],
   [0.9, 0.5], [0.5, 0.5], [0.1, 0.5],
@@ -288,7 +283,6 @@ function sobel(px, w, h) {
 }
 
 /* ── draw dots ───────────────────────────────────────────────────────── */
-// All dots are identical small 2×2 px points — every one carries analysis data
 function drawDots(activePts) {
   const W = dotCanvas.width, H = dotCanvas.height;
   if (!W || !H) return;
@@ -377,51 +371,44 @@ function analyze() {
   const px   = id.data;
   const { gx, gy, mg } = sobel(px, W_ANA, H_ANA);
 
-  // One dot per grid cell — pick the pixel with the strongest edge in each cell
-  const pts = [];
-
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let c = 0; c < GRID_COLS; c++) {
-      const x0 = Math.floor(c       * W_ANA / GRID_COLS) + 1;
-      const y0 = Math.floor(r       * H_ANA / GRID_ROWS) + 1;
-      const x1 = Math.floor((c + 1) * W_ANA / GRID_COLS) - 1;
-      const y1 = Math.floor((r + 1) * H_ANA / GRID_ROWS) - 1;
-
-      let best = 0, bi = -1;
-      for (let y = y0; y <= y1; y++)
-        for (let x = x0; x <= x1; x++) {
-          const i = y * W_ANA + x;
-          if (mg[i] > best) { best = mg[i]; bi = i; }
-        }
-
-      // Skip cells with no meaningful edge
-      if (best < 18 || bi < 0) continue;
-
-      const bx = bi % W_ANA, by = Math.floor(bi / W_ANA);
-      const nx = bx / W_ANA, ny = by / H_ANA;
-      const m  = 0.06;
-
-      const st  = rStats( px,     W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
-      const mv  = rMotion(px, prevPx, W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
-
-      const agx = Math.abs(gx[bi]), agy = Math.abs(gy[bi]);
-      const a   = ((Math.atan2(gy[bi], gx[bi]) * 180 / Math.PI) % 180 + 180) % 180;
-
-      let dir;
-      if      (agx > 90 && agy > 90)  dir = 'CORNER';
-      else if (a < 25 || a >= 155)     dir = 'HORIZONTAL';
-      else if (a >= 65 && a < 115)     dir = 'VERTICAL';
-      else                             dir = 'DIAGONAL';
-
-      pts.push({
-        nx:    Math.max(0.01, Math.min(0.99, nx)),
-        ny:    Math.max(0.01, Math.min(0.99, ny)),
-        label: makeLabel(dir, best, st, mv)
-      });
+  // Pixel-by-pixel scan — collect ALL strong edge points, sort by magnitude, take top N_ANN
+  const all = [];
+  for (let y = 1; y < H_ANA - 1; y += DOT_STEP) {
+    for (let x = 1; x < W_ANA - 1; x += DOT_STEP) {
+      const i = y * W_ANA + x;
+      if (mg[i] >= DOT_THRESH) all.push({ i, mag: mg[i] });
     }
   }
+  all.sort((a, b) => b.mag - a.mag);
+  if (all.length > N_ANN) all.length = N_ANN;
 
-  // Draw every active dot as an identical small point
+  const pts = [];
+  const m = 0.06;
+
+  for (const { i, mag } of all) {
+    const bx = i % W_ANA, by = Math.floor(i / W_ANA);
+    const nx = bx / W_ANA, ny = by / H_ANA;
+
+    const st = rStats( px,     W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
+    const mv = rMotion(px, prevPx, W_ANA, H_ANA, nx-m, ny-m, nx+m, ny+m);
+
+    const agx = Math.abs(gx[i]), agy = Math.abs(gy[i]);
+    const a   = ((Math.atan2(gy[i], gx[i]) * 180 / Math.PI) % 180 + 180) % 180;
+
+    let dir;
+    if      (agx > 90 && agy > 90)  dir = 'CORNER';
+    else if (a < 25 || a >= 155)     dir = 'HORIZONTAL';
+    else if (a >= 65 && a < 115)     dir = 'VERTICAL';
+    else                             dir = 'DIAGONAL';
+
+    pts.push({
+      nx:    Math.max(0.01, Math.min(0.99, nx)),
+      ny:    Math.max(0.01, Math.min(0.99, ny)),
+      label: makeLabel(dir, mag, st, mv)
+    });
+  }
+
+  // Draw every dot as an identical small 2×2 point
   drawDots(pts);
 
   // Sync pool — unrevealed slots update position & label freely
@@ -437,14 +424,12 @@ function analyze() {
         a.blurLevel = 0;
         a.el.style.left = (p.nx * 100).toFixed(2) + '%';
         a.el.style.top  = (p.ny * 100).toFixed(2) + '%';
-        // Text to the RIGHT of dot, or LEFT when near right edge
         a.el.style.transform = p.nx > 0.62
           ? 'translate(calc(-100% - 12px), -50%)'
           : 'translate(12px, -50%)';
       }
       a.el.textContent = p.label;
     } else {
-      // Slot no longer active — hide and reset
       a.active    = false;
       a.revealed  = false;
       a.blurLevel = 0;
@@ -475,7 +460,6 @@ function applyGaze(ts) {
   gazeDot.style.left = (rect.left + gpx) + 'px';
   gazeDot.style.top  = (rect.top  + gpy) + 'px';
 
-  // Reveal radius ≈ cursor circle radius + dot radius + small tolerance
   const revR = Math.min(W, H) * REVEAL_FRAC;
 
   for (const a of pool) {
@@ -485,18 +469,13 @@ function applyGaze(ts) {
     const near = d < revR;
 
     if (near) {
-      // Cursor is on this dot — show text sharp
       if (!a.revealed) { a.revealed = true; a.blurLevel = 0; }
       a.blurLevel = Math.max(0, a.blurLevel - BLUR_CLEAR_RATE * dt);
       a.el.style.opacity = '1';
       a.el.style.filter  = 'none';
-
     } else if (a.revealed) {
-      // Cursor left — gradually blur out
       a.blurLevel = Math.min(MAX_BLUR, a.blurLevel + BLUR_GROW_RATE * dt);
       a.el.style.filter = `blur(${a.blurLevel.toFixed(2)}px)`;
-
-      // Fully blurred → reset so dot is ready to reveal fresh next pass
       if (a.blurLevel >= MAX_BLUR * 0.98) {
         a.revealed  = false;
         a.blurLevel = 0;
@@ -574,23 +553,19 @@ function drawIntro() {
   calCtx.fillStyle = '#000';
   calCtx.fillRect(0, 0, W, H);
   calCtx.textAlign = 'center';
-
   calCtx.fillStyle = '#cccccc';
   calCtx.font = 'bold 22px Courier New';
   calCtx.fillText('HEAD TRACKING CALIBRATION', W / 2, H / 2 - 52);
-
   calCtx.strokeStyle = '#2a2a2a';
   calCtx.lineWidth = 1;
   calCtx.beginPath();
   calCtx.moveTo(W / 2 - 220, H / 2 - 36);
   calCtx.lineTo(W / 2 + 220, H / 2 - 36);
   calCtx.stroke();
-
   calCtx.fillStyle = '#888888';
   calCtx.font = '14px Courier New';
   calCtx.fillText('Point your head at each dot and hold still', W / 2, H / 2 - 14);
   calCtx.fillText('until the ring fills completely', W / 2, H / 2 + 8);
-
   calCtx.fillStyle = '#484848';
   calCtx.font = '12px Courier New';
   calCtx.fillText('Move only your head — keep your body still', W / 2, H / 2 + 34);
@@ -613,38 +588,30 @@ function awaitDot(px, py, index) {
   return new Promise(resolve => {
     let progress = 0, prevTs = null;
     const samples = [];
-
     function frame(ts) {
       const dt   = prevTs ? Math.min((ts - prevTs) / 1000, 0.05) : 0;
       prevTs     = ts;
       const stab = stability();
-
       progress += stab * CAL_FILL_RATE * dt;
       progress -= (1 - stab) * CAL_DRAIN_RATE * dt;
       progress  = Math.max(0, Math.min(1, progress));
-
       if (stab > 0.45) samples.push({ ox: curOffX, oy: curOffY });
-
       const W = calCanvas.width, H = calCanvas.height;
       calCtx.fillStyle = '#000';
       calCtx.fillRect(0, 0, W, H);
-
       calCtx.textAlign = 'right';
       calCtx.fillStyle = '#777777';
       calCtx.font = '14px Courier New';
       calCtx.fillText(`${index + 1}  /  ${CAL_PTS.length}`, W - 28, 36);
-
       calCtx.textAlign = 'center';
       calCtx.fillStyle = '#666666';
       calCtx.font = '13px Courier New';
       calCtx.fillText('POINT HEAD AT DOT · HOLD STILL', W / 2, H - 26);
-
       calCtx.beginPath();
       calCtx.arc(px, py, 22, 0, Math.PI * 2);
       calCtx.strokeStyle = '#1a1a1a';
       calCtx.lineWidth = 1.5;
       calCtx.stroke();
-
       if (progress > 0) {
         calCtx.beginPath();
         calCtx.arc(px, py, 22, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
@@ -652,13 +619,11 @@ function awaitDot(px, py, index) {
         calCtx.lineWidth = 2;
         calCtx.stroke();
       }
-
       const r = 3.5 + stab * 2.5;
       calCtx.beginPath();
       calCtx.arc(px, py, r, 0, Math.PI * 2);
       calCtx.fillStyle = `rgba(255,255,255,${0.2 + stab * 0.8})`;
       calCtx.fill();
-
       if (progress >= 1) {
         calCtx.beginPath();
         calCtx.arc(px, py, 22, 0, Math.PI * 2);
@@ -681,12 +646,10 @@ function awaitDot(px, py, index) {
 async function runCalibration() {
   resizeCal();
   window.addEventListener('resize', resizeCal);
-
   drawIntro();
   calStartBtn.style.display = 'block';
   await new Promise(r => calStartBtn.addEventListener('click', r, { once: true }));
   calStartBtn.style.display = 'none';
-
   const calData = [];
   for (let i = 0; i < CAL_PTS.length; i++) {
     const [nx, ny] = CAL_PTS[i];
@@ -696,9 +659,7 @@ async function runCalibration() {
     const { ox, oy } = await awaitDot(px, py, i);
     calData.push({ sx: nx, sy: ny, ox, oy });
   }
-
   if (calData.length >= 4) calMap = fitAffine(calData);
-
   drawDone();
   await new Promise(r => setTimeout(r, 900));
   calOverlay.style.display = 'none';
@@ -739,18 +700,15 @@ async function startHeadTracking() {
         const res = fl.detectForVideo(webcamEl, performance.now());
         if (res.faceLandmarks?.length > 0) {
           const lm = res.faceLandmarks[0];
-          // Weighted average: nose tip (×4) + glabella + chin + cheeks
           const nose = lm[1], brow = lm[168], chin = lm[152];
           const lChk = lm[234], rChk = lm[454];
           const hxRaw = (nose.x*4 + brow.x + chin.x + lChk.x + rChk.x) / 8;
           const hyRaw = (nose.y*4 + brow.y + chin.y + lChk.y + rChk.y) / 8;
-          const headX = 1 - hxRaw; // mirror X
+          const headX = 1 - hxRaw;
           const headY = hyRaw;
-
           curOffX = headX; curOffY = headY;
           offXBuf.push(headX); if (offXBuf.length > BUF_MAX) offXBuf.shift();
           offYBuf.push(headY); if (offYBuf.length > BUF_MAX) offYBuf.shift();
-
           if (calMap) {
             rawGX = calMap.ax*headX + calMap.bx*headY + calMap.cx;
             rawGY = calMap.ay*headX + calMap.by*headY + calMap.cy;
@@ -795,10 +753,8 @@ async function boot() {
   sizeWrapper();
   mainVideo.addEventListener('loadedmetadata', sizeWrapper);
   window.addEventListener('resize', sizeWrapper);
-
   if (mainVideo.readyState < 2)
     await new Promise(r => mainVideo.addEventListener('canplay', r, { once: true }));
-
   const ok = await startHeadTracking();
   if (ok) {
     await runCalibration();
@@ -806,7 +762,6 @@ async function boot() {
     calOverlay.style.display = 'none';
     enablePointerFallback();
   }
-
   analyze();
   lastAnaTs = performance.now();
   requestAnimationFrame(mainLoop);
